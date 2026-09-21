@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management · SMS Monitor</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Figtree:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <script>
+        window.CURRENT_USER = "{{ username }}";
+        window.CURRENT_ROLE = "{{ role }}";
+    </script>
+    <style>
+        .users-table th, .users-table td { padding: 11px 14px; }
+        .role-pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+        }
+        .role-admin  { background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; }
+        .role-viewer { background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; }
+        .status-pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 100px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .status-active   { background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; }
+        .status-inactive { background:#fef2f2; color:#dc2626; border:1px solid #fecaca; }
+        .action-btn {
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            margin-right: 4px;
+        }
+        .btn-reset    { background:#fffbeb; color:#d97706; border:1px solid #fde68a; }
+        .btn-toggle   { background:#fef2f2; color:#dc2626; border:1px solid #fecaca; }
+        .btn-activate { background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; }
+        .btn-reset:hover    { background:#fde68a; }
+        .btn-toggle:hover   { background:#fecaca; }
+        .btn-activate:hover { background:#bbf7d0; }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.45);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: #fff;
+            border-radius: 12px;
+            padding: 28px 32px;
+            width: 380px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.2);
+        }
+        .modal h3 { margin: 0 0 18px; font-size: 16px; font-weight: 700; color: #0f172a; }
+        .modal-field { margin-bottom: 14px; }
+        .modal-field label { display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 5px; }
+        .modal-field input, .modal-field select {
+            width: 100%; box-sizing: border-box;
+            padding: 8px 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 7px;
+            font-size: 13px;
+            font-family: inherit;
+        }
+        .modal-field input:focus, .modal-field select:focus {
+            outline: none; border-color: #2563eb;
+        }
+        .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+        .btn-primary {
+            padding: 8px 18px; border-radius: 7px; font-size: 13px; font-weight: 600;
+            background: #2563eb; color: #fff; border: none; cursor: pointer;
+        }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-cancel {
+            padding: 8px 18px; border-radius: 7px; font-size: 13px; font-weight: 600;
+            background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; cursor: pointer;
+        }
+        .modal-feedback {
+            margin-top: 10px; font-size: 12px; font-weight: 600;
+            min-height: 16px; text-align: center;
+        }
+        .modal-feedback.error   { color: #dc2626; }
+        .modal-feedback.success { color: #16a34a; }
+        .add-user-btn {
+            padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 600;
+            background: #2563eb; color: #fff; border: none; cursor: pointer; display: flex;
+            align-items: center; gap: 6px;
+        }
+        .add-user-btn:hover { background: #1d4ed8; }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="pulse-ring"></div>
+            <span class="brand-name">SMS Monitor</span>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a class="nav-item" id="trends-nav" href="/sms-trends" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>SMS Trends</span>
+            </a>
+            <a class="nav-item" href="/dashboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span>Dashboard</span>
+            </a>
+            <a class="nav-item" id="settings-nav" href="#" style="display:none" onclick="openSettings(); return false;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>Settings</span>
+            </a>
+            <div class="nav-group" id="master-user-group" style="display:none">
+                <button class="nav-item nav-group-btn" id="master-user-toggle" onclick="toggleMasterUser()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Master User</span>
+                    <svg class="chevron" id="master-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="master-panel" id="master-panel">
+                    <a class="nav-sub-item active" href="/users">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>User Management</span>
+                    </a>
+                    <a class="nav-sub-item" href="/client-emails">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                        <span>Client Email</span>
+                    </a>
+                    <div class="nav-sub-divider"></div>
+                    <button class="nav-sub-item nav-sub-toggle" id="credit-usage-toggle" onclick="toggleCreditForm()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                        <span>Credit Usage</span>
+                        <svg class="chevron" id="credit-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="master-form" id="credit-form-panel" style="display:none">
+                        <div class="mf-group">
+                            <label class="mf-label">Client</label>
+                            <select id="mf-client" class="mf-select"><option value="">— Select client —</option></select>
+                        </div>
+                        <div class="mf-group">
+                            <label class="mf-label">SMS Credit Count</label>
+                            <input type="number" id="mf-sms-count" class="mf-input" placeholder="e.g. 10000" min="1" />
+                        </div>
+                        <div class="mf-group mf-date-row">
+                            <div class="mf-date-half">
+                                <label class="mf-label">Start Date</label>
+                                <input type="date" id="mf-start-date" class="mf-input" />
+                            </div>
+                            <div class="mf-date-half">
+                                <label class="mf-label">End Date</label>
+                                <input type="date" id="mf-end-date" class="mf-input" />
+                            </div>
+                        </div>
+                        <p class="mf-date-hint">Leave blank to add credits without an expiry window.</p>
+                        <button class="mf-submit" id="mf-submit-btn" onclick="assignCredits()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Assign Credits
+                        </button>
+                        <div class="mf-feedback" id="mf-feedback"></div>
+                    </div>
+                </div>
+            </div>
+            <a class="nav-item" id="usage-report-nav" href="/client-usage-report" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <span>Client Usage Report</span>
+            </a>
+            <a class="nav-item" id="audit-log-nav" href="/audit-log" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span>Audit Log</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-user">
+                <div class="user-avatar" id="sidebar-avatar">A</div>
+                <div class="user-info">
+                    <span class="user-name" id="sidebar-username">Admin</span>
+                    <span class="user-role" id="sidebar-userrole">Admin</span>
+                </div>
+            </div>
+            <a href="/logout" class="logout-btn" title="Sign out">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main">
+        <header class="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title">User Management</h1>
+                <span class="page-sub">Add, manage roles, reset passwords, and activate or deactivate users</span>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-date" id="live-date"></div>
+            </div>
+        </header>
+
+        <div class="content">
+            <section class="table-section">
+                <div class="table-header">
+                    <div class="table-header-left">
+                        <h2 class="section-title">All Users</h2>
+                        <span class="section-sub" id="user-count">Loading…</span>
+                    </div>
+                    <div class="table-header-right">
+                        <button class="add-user-btn" onclick="openAddModal()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Add User
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="data-table users-table">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Last Login</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-body">
+                            <tr><td colspan="6" class="loading-row">
+                                <div class="loading-dots"><span></span><span></span><span></span></div>
+                            </td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="table-footer">
+                    <span id="users-footer-count">—</span>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div class="modal-overlay" id="add-modal">
+        <div class="modal">
+            <h3>Add New User</h3>
+            <div class="modal-field">
+                <label>Username</label>
+                <input type="text" id="add-username" placeholder="e.g. john" autocomplete="off" />
+            </div>
+            <div class="modal-field">
+                <label>Password</label>
+                <input type="password" id="add-password" placeholder="Min 8 chars, 1 uppercase" />
+            </div>
+            <div class="modal-field">
+                <label>Role</label>
+                <select id="add-role">
+                    <option value="viewer">Viewer — view only</option>
+                    <option value="admin">Admin — full access</option>
+                </select>
+            </div>
+            <div class="modal-feedback" id="add-feedback"></div>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeAddModal()">Cancel</button>
+                <button class="btn-primary" onclick="submitAddUser()">Create User</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset Password Modal -->
+    <div class="modal-overlay" id="reset-modal">
+        <div class="modal">
+            <h3>Reset Password — <span id="reset-target-name"></span></h3>
+            <div class="modal-field">
+                <label>New Password</label>
+                <input type="password" id="reset-password" placeholder="Min 8 chars, 1 uppercase" />
+            </div>
+            <div class="modal-feedback" id="reset-feedback"></div>
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeResetModal()">Cancel</button>
+                <button class="btn-primary" onclick="submitResetPassword()">Save Password</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+
+        /* Sidebar user info */
+        const _u = (window.CURRENT_USER || 'User').trim();
+        const _r = window.CURRENT_ROLE || 'admin';
+        document.getElementById('sidebar-avatar').textContent   = _u.charAt(0).toUpperCase();
+        document.getElementById('sidebar-username').textContent = _u;
+        document.getElementById('sidebar-userrole').textContent = _r === 'admin' ? 'Admin' : 'Viewer';
+
+        /* Live date */
+        function updateDate() {
+            const el = document.getElementById('live-date');
+            if (el) el.textContent = new Date().toLocaleDateString('en-IN', {
+                weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+            });
+        }
+        updateDate();
+        setInterval(updateDate, 60000);
+
+        /* ── Load users ── */
+        let usersData = [];
+
+        async function loadUsers() {
+            try {
+                const res  = await fetch('/api/users');
+                const data = await res.json();
+                usersData  = data.users || [];
+                renderUsers();
+            } catch (e) {
+                document.getElementById('users-body').innerHTML =
+                    '<tr><td colspan="6" style="text-align:center;color:#dc2626;padding:20px">Failed to load users.</td></tr>';
+            }
+        }
+
+        function fmtDate(iso) {
+            if (!iso) return '—';
+            return new Date(iso).toLocaleDateString('en-IN', {
+                day: 'numeric', month: 'short', year: 'numeric'
+            });
+        }
+
+        function renderUsers() {
+            const tbody = document.getElementById('users-body');
+            const count = usersData.length;
+            document.getElementById('user-count').textContent      = `${count} user${count !== 1 ? 's' : ''}`;
+            document.getElementById('users-footer-count').textContent = `${count} user${count !== 1 ? 's' : ''} total`;
+
+            if (!count) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">No users found.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = usersData.map(u => {
+                const rolePill   = u.role === 'admin'
+                    ? '<span class="role-pill role-admin">Admin</span>'
+                    : '<span class="role-pill role-viewer">Viewer</span>';
+                const statusPill = u.is_active
+                    ? '<span class="status-pill status-active">Active</span>'
+                    : '<span class="status-pill status-inactive">Inactive</span>';
+                const toggleBtn  = u.is_active
+                    ? `<button class="action-btn btn-toggle"   onclick="toggleStatus('${u.username}', false)">Deactivate</button>`
+                    : `<button class="action-btn btn-activate" onclick="toggleStatus('${u.username}', true)">Activate</button>`;
+
+                return `<tr>
+                    <td><strong>${u.username}</strong></td>
+                    <td>${rolePill}</td>
+                    <td>${statusPill}</td>
+                    <td>${fmtDate(u.created_date)}</td>
+                    <td>${fmtDate(u.last_login)}</td>
+                    <td>
+                        <button class="action-btn btn-reset" onclick="openResetModal('${u.username}')">Reset Password</button>
+                        ${toggleBtn}
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        /* ── Add User Modal ── */
+        window.openAddModal = function () {
+            document.getElementById('add-username').value  = '';
+            document.getElementById('add-password').value  = '';
+            document.getElementById('add-role').value      = 'viewer';
+            document.getElementById('add-feedback').textContent = '';
+            document.getElementById('add-feedback').className   = 'modal-feedback';
+            document.getElementById('add-modal').classList.add('open');
+            document.getElementById('add-username').focus();
+        };
+
+        window.closeAddModal = function () {
+            document.getElementById('add-modal').classList.remove('open');
+        };
+
+        window.submitAddUser = async function () {
+            const username = document.getElementById('add-username').value.trim();
+            const password = document.getElementById('add-password').value;
+            const role     = document.getElementById('add-role').value;
+            const fb       = document.getElementById('add-feedback');
+
+            if (!username || !password) {
+                fb.textContent = 'Username and password are required.';
+                fb.className   = 'modal-feedback error';
+                return;
+            }
+
+            try {
+                const res  = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, role })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    fb.textContent = 'User created successfully!';
+                    fb.className   = 'modal-feedback success';
+                    setTimeout(() => { closeAddModal(); loadUsers(); }, 800);
+                } else {
+                    fb.textContent = data.message || 'Failed to create user.';
+                    fb.className   = 'modal-feedback error';
+                }
+            } catch (e) {
+                fb.textContent = 'Network error. Try again.';
+                fb.className   = 'modal-feedback error';
+            }
+        };
+
+        /* ── Reset Password Modal ── */
+        let resetTarget = null;
+
+        window.openResetModal = function (username) {
+            resetTarget = username;
+            document.getElementById('reset-target-name').textContent = username;
+            document.getElementById('reset-password').value          = '';
+            document.getElementById('reset-feedback').textContent    = '';
+            document.getElementById('reset-feedback').className      = 'modal-feedback';
+            document.getElementById('reset-modal').classList.add('open');
+            document.getElementById('reset-password').focus();
+        };
+
+        window.closeResetModal = function () {
+            document.getElementById('reset-modal').classList.remove('open');
+            resetTarget = null;
+        };
+
+        window.submitResetPassword = async function () {
+            const password = document.getElementById('reset-password').value;
+            const fb       = document.getElementById('reset-feedback');
+
+            if (!password) {
+                fb.textContent = 'Please enter a new password.';
+                fb.className   = 'modal-feedback error';
+                return;
+            }
+
+            try {
+                const res  = await fetch(`/api/users/${encodeURIComponent(resetTarget)}/reset-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ new_password: password })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    fb.textContent = 'Password updated!';
+                    fb.className   = 'modal-feedback success';
+                    setTimeout(closeResetModal, 800);
+                } else {
+                    fb.textContent = data.message || 'Failed to reset password.';
+                    fb.className   = 'modal-feedback error';
+                }
+            } catch (e) {
+                fb.textContent = 'Network error. Try again.';
+                fb.className   = 'modal-feedback error';
+            }
+        };
+
+        /* ── Toggle active/inactive ── */
+        window.toggleStatus = async function (username, activate) {
+            try {
+                const res  = await fetch(`/api/users/${encodeURIComponent(username)}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_active: activate })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    loadUsers();
+                } else {
+                    alert(data.message || 'Failed to update status.');
+                }
+            } catch (e) {
+                alert('Network error. Try again.');
+            }
+        };
+
+        /* Close modals on backdrop click */
+        document.getElementById('add-modal').addEventListener('click', function (e) {
+            if (e.target === this) closeAddModal();
+        });
+        document.getElementById('reset-modal').addEventListener('click', function (e) {
+            if (e.target === this) closeResetModal();
+        });
+
+        loadUsers();
+    })();
+    </script>
+<!-- Settings modal -->
+    <div class="st-overlay" id="st-overlay" style="display:none" onclick="if(event.target===this)closeSettings()">
+        <div class="st-modal">
+            <div class="st-header">
+                <div class="st-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Alert Thresholds
+                </div>
+                <button class="st-close" onclick="closeSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="st-body">
+                <p class="st-desc">Set the usage % at which clients are flagged as Warning or Critical. Changes apply immediately — no restart needed.</p>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-warning"></span>Warning Threshold (%)</label>
+                    <input type="number" id="st-warning" class="st-input" min="1" max="99" placeholder="e.g. 50" />
+                    <span class="st-hint">Clients at or above this % are shown as Warning</span>
+                </div>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-critical"></span>Critical Threshold (%)</label>
+                    <input type="number" id="st-critical" class="st-input" min="1" max="99" placeholder="e.g. 90" />
+                    <span class="st-hint">Clients at or above this % are shown as Critical</span>
+                </div>
+                <div class="st-feedback" id="st-feedback"></div>
+            </div>
+            <div class="st-footer">
+                <button class="st-btn-cancel" onclick="closeSettings()">Cancel</button>
+                <button class="st-btn-save" id="st-save-btn" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/toast.js?v=3"></script>
+    <script src="/static/js/sidebar.js?v=4"></script>
+    <script>if (window.toggleMasterUser) window.toggleMasterUser();</script>
+</body>
+</html>

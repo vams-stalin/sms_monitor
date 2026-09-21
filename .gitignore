@@ -1,0 +1,16 @@
+# Credentials — never commit
+.env
+email.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test / debug artefacts
+cookies.txt
+viewer_cookies.txt
+test_cookies.txt
+server_out.txt
+server_err.txt

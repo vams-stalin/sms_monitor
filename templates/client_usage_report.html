@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client Usage Report · VAMS SMS Monitor</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        window.CURRENT_USER = "{{ username }}";
+        window.CURRENT_ROLE = "{{ role }}";
+    </script>
+    <style>
+        .ur-card {
+            background: #fff;
+            border: 1px solid #e8edf3;
+            border-radius: 12px;
+            padding: 24px 28px;
+            margin-bottom: 22px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.05);
+        }
+        .ur-card-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #0f172a;
+            margin: 0 0 4px;
+        }
+        .ur-card-sub {
+            font-size: 12px;
+            color: #94a3b8;
+            margin: 0 0 20px;
+        }
+        .ur-form-row {
+            display: flex;
+            gap: 16px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        .ur-field {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex: 1;
+            min-width: 160px;
+        }
+        .ur-field label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+        }
+        .ur-field select,
+        .ur-field input[type="date"] {
+            padding: 8px 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 7px;
+            font-size: 13px;
+            font-family: inherit;
+            background: #fff;
+            color: #0f172a;
+        }
+        .ur-field select:focus,
+        .ur-field input:focus {
+            outline: none;
+            border-color: #30318C;
+            box-shadow: 0 0 0 3px rgba(48,49,140,.08);
+        }
+        .ur-gen-btn {
+            padding: 8px 20px;
+            background: #30318C;
+            color: #fff;
+            border: none;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .ur-gen-btn:hover { background: #232960; }
+        .ur-gen-btn:disabled { opacity: .6; cursor: not-allowed; }
+        .ur-feedback {
+            font-size: 12px;
+            font-weight: 500;
+            margin-top: 10px;
+            min-height: 16px;
+        }
+        .ur-feedback.error   { color: #dc2626; }
+        .ur-feedback.success { color: #16a34a; }
+        .ur-feedback.info    { color: #64748b; }
+
+        /* Stats row */
+        .ur-stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+        @media (max-width: 900px) {
+            .ur-stats-row { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 520px) {
+            .ur-stats-row { grid-template-columns: 1fr; }
+        }
+        .ur-stat-card {
+            background: #fff;
+            border: 1px solid #e8edf3;
+            border-radius: 10px;
+            padding: 16px 18px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.04);
+        }
+        .ur-stat-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            margin-bottom: 6px;
+        }
+        .ur-stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #0f172a;
+            line-height: 1.1;
+        }
+        .ur-stat-sub {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 4px;
+        }
+        .ur-stat-card.peak .ur-stat-value  { color: #30318C; }
+        .ur-stat-card.low  .ur-stat-value  { color: #00B5A5; }
+
+        /* Chart */
+        .ur-chart-wrap {
+            position: relative;
+            height: 240px;
+        }
+
+        /* Table */
+        .ur-table-wrap {
+            max-height: 380px;
+            overflow-y: auto;
+        }
+        .ur-data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .ur-data-table th {
+            background: #f8fafc;
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+            padding: 9px 14px;
+            border-bottom: 1px solid #e2e8f0;
+            text-align: left;
+            position: sticky;
+            top: 0;
+        }
+        .ur-data-table td {
+            padding: 8px 14px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #1e293b;
+        }
+        .ur-data-table tr:last-child td { border-bottom: none; }
+        .ur-data-table td:last-child { text-align: right; font-weight: 600; }
+
+        /* Action buttons */
+        .ur-action-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .ur-dl-btn {
+            padding: 8px 18px;
+            background: #f0fdf4;
+            color: #16a34a;
+            border: 1px solid #bbf7d0;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        .ur-dl-btn:hover { background: #dcfce7; }
+        .ur-send-btn {
+            padding: 8px 18px;
+            background: #eff6ff;
+            color: #2563eb;
+            border: 1px solid #bfdbfe;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        .ur-send-btn:hover { background: #dbeafe; }
+        .ur-send-btn:disabled { opacity: .6; cursor: not-allowed; }
+        .ur-action-feedback {
+            font-size: 12px;
+            font-weight: 500;
+            min-height: 16px;
+        }
+        .ur-action-feedback.error   { color: #dc2626; }
+        .ur-action-feedback.success { color: #16a34a; }
+
+        #rpt-results { display: none; }
+
+        /* Layout and form reliability fixes */
+        .main { min-width: 0; }
+        .content { min-width: 0; width: 100%; max-width: 100%; }
+        .ur-card { min-width: 0; max-width: 100%; }
+        .ur-form-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+            gap: 16px;
+            align-items: end;
+        }
+        .ur-field { min-width: 0; width: 100%; }
+        .ur-field select, .ur-field input[type="date"] {
+            width: 100%; min-width: 0; height: 36px; cursor: pointer;
+        }
+        .ur-gen-btn { height: 36px; }
+        @media (max-width: 900px) {
+            .ur-form-row { grid-template-columns: 1fr 1fr; }
+            .ur-gen-btn { width: 100%; }
+        }
+        @media (max-width: 600px) {
+            .ur-form-row { grid-template-columns: 1fr; }
+        }
+    </style>
+
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <img src="/static/images/logo.png" alt="VAMS Global" class="sidebar-logo">
+        </div>
+
+        <nav class="sidebar-nav">
+            <a class="nav-item" id="trends-nav" href="/sms-trends" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>SMS Trends</span>
+            </a>
+            <a class="nav-item" href="/dashboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span>Dashboard</span>
+            </a>
+            <a class="nav-item" id="settings-nav" href="#" style="display:none" onclick="openSettings(); return false;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>Settings</span>
+            </a>
+            <div class="nav-group" id="master-user-group" style="display:none">
+                <button class="nav-item nav-group-btn" id="master-user-toggle" onclick="toggleMasterUser()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Master User</span>
+                    <svg class="chevron" id="master-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="master-panel" id="master-panel">
+                    <a class="nav-sub-item" href="/users">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>User Management</span>
+                    </a>
+                    <a class="nav-sub-item" href="/client-emails">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                        <span>Client Email</span>
+                    </a>
+                    <div class="nav-sub-divider"></div>
+                    <button class="nav-sub-item nav-sub-toggle" id="credit-usage-toggle" onclick="toggleCreditForm()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                        <span>Credit Usage</span>
+                        <svg class="chevron" id="credit-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="master-form" id="credit-form-panel" style="display:none">
+                        <div class="mf-group">
+                            <label class="mf-label">Client</label>
+                            <select id="mf-client" class="mf-select"><option value="">— Select client —</option></select>
+                        </div>
+                        <div class="mf-group">
+                            <label class="mf-label">SMS Credit Count</label>
+                            <input type="number" id="mf-sms-count" class="mf-input" placeholder="e.g. 10000" min="1" />
+                        </div>
+                        <div class="mf-group mf-date-row">
+                            <div class="mf-date-half">
+                                <label class="mf-label">Start Date</label>
+                                <input type="date" id="mf-start-date" class="mf-input" />
+                            </div>
+                            <div class="mf-date-half">
+                                <label class="mf-label">End Date</label>
+                                <input type="date" id="mf-end-date" class="mf-input" />
+                            </div>
+                        </div>
+                        <p class="mf-date-hint">Leave blank to add credits without an expiry window.</p>
+                        <button class="mf-submit" id="mf-submit-btn" onclick="assignCredits()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Assign Credits
+                        </button>
+                        <div class="mf-feedback" id="mf-feedback"></div>
+                    </div>
+                </div>
+            </div>
+            <a class="nav-item active" id="usage-report-nav" href="/client-usage-report" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <span>Client Usage Report</span>
+            </a>
+            <a class="nav-item" id="audit-log-nav" href="/audit-log" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span>Audit Log</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-user">
+                <div class="user-avatar" id="sidebar-avatar">A</div>
+                <div class="user-info">
+                    <span class="user-name" id="sidebar-username">Admin</span>
+                    <span class="user-role" id="sidebar-userrole">Admin</span>
+                </div>
+            </div>
+            <a href="/logout" class="logout-btn" title="Sign out">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main">
+        <header class="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title">Client Usage Report</h1>
+                <span class="page-sub">Day-wise client SMS usage and detailed reporting</span>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-date" id="live-date"></div>
+            </div>
+        </header>
+
+        <div class="content">
+
+            <!-- Filter card -->
+            <div class="ur-card">
+                <p class="ur-card-title">Generate Report</p>
+                <p class="ur-card-sub">Select a client and date range to view day-wise SMS usage.</p>
+                <div class="ur-form-row">
+                    <div class="ur-field">
+                        <label>Client</label>
+                        <select id="rpt-client">
+                            <option value="">— Select a client —</option>
+                        </select>
+                    </div>
+                    <div class="ur-field">
+                        <label>Start Date</label>
+                        <input type="date" id="rpt-start" autocomplete="off" onclick="if(this.showPicker)this.showPicker()" />
+                    </div>
+                    <div class="ur-field">
+                        <label>End Date</label>
+                        <input type="date" id="rpt-end" autocomplete="off" onclick="if(this.showPicker)this.showPicker()" />
+                    </div>
+                    <button class="ur-gen-btn" id="rpt-gen-btn" onclick="generateReport()">Generate Report</button>
+                </div>
+                <div class="ur-feedback" id="rpt-feedback"></div>
+            </div>
+
+            <!-- Results section (hidden until report is generated) -->
+            <div id="rpt-results">
+
+                <!-- Graph card -->
+                <div class="ur-card">
+                    <p class="ur-card-title" id="rpt-chart-title">Day-wise SMS Usage</p>
+                    <p class="ur-card-sub" id="rpt-chart-sub"></p>
+                    <div class="ur-chart-wrap">
+                        <canvas id="rpt-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Stats row -->
+                <div class="ur-stats-row">
+                    <div class="ur-stat-card">
+                        <div class="ur-stat-label">Total SMS</div>
+                        <div class="ur-stat-value" id="stat-total">—</div>
+                        <div class="ur-stat-sub" id="stat-period">—</div>
+                    </div>
+                    <div class="ur-stat-card">
+                        <div class="ur-stat-label">Daily Average</div>
+                        <div class="ur-stat-value" id="stat-avg">—</div>
+                        <div class="ur-stat-sub">per day</div>
+                    </div>
+                    <div class="ur-stat-card peak">
+                        <div class="ur-stat-label">Peak Day</div>
+                        <div class="ur-stat-value" id="stat-peak-count">—</div>
+                        <div class="ur-stat-sub" id="stat-peak-date">—</div>
+                    </div>
+                    <div class="ur-stat-card low">
+                        <div class="ur-stat-label">Lowest Day</div>
+                        <div class="ur-stat-value" id="stat-low-count">—</div>
+                        <div class="ur-stat-sub" id="stat-low-date">—</div>
+                    </div>
+                </div>
+
+                <!-- Table card -->
+                <div class="ur-card">
+                    <p class="ur-card-title">Day-wise Breakdown</p>
+                    <div class="ur-table-wrap">
+                        <table class="ur-data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th style="text-align:right;">SMS Used</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rpt-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="ur-card">
+                    <p class="ur-card-title">Actions</p>
+                    <div class="ur-action-row">
+                        <button class="ur-dl-btn" onclick="downloadReport()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:middle;margin-right:5px;">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            Download Report (Excel)
+                        </button>
+                        <button class="ur-send-btn" id="rpt-send-btn" onclick="sendReport()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:middle;margin-right:5px;">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                            Send Report to Client
+                        </button>
+                        <div class="ur-action-feedback" id="rpt-action-feedback"></div>
+                    </div>
+                </div>
+
+            </div><!-- /#rpt-results -->
+
+        </div>
+
+        <footer class="page-footer">
+            <strong>VAMS Global</strong> &nbsp;&middot;&nbsp; VAMS SMS Monitor &nbsp;&middot;&nbsp; &copy; 2026 &nbsp;&middot;&nbsp; Internal Use Only
+        </footer>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="st-overlay" id="st-overlay" style="display:none" onclick="if(event.target===this)closeSettings()">
+        <div class="st-modal">
+            <div class="st-header">
+                <div class="st-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Alert Thresholds
+                </div>
+                <button class="st-close" onclick="closeSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="st-body">
+                <p class="st-desc">Set the usage % at which clients are flagged as Warning or Critical.</p>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-warning"></span>Warning Threshold (%)</label>
+                    <input type="number" id="st-warning" class="st-input" min="1" max="99" placeholder="e.g. 50" />
+                    <span class="st-hint">Clients at or above this % are shown as Warning</span>
+                </div>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-critical"></span>Critical Threshold (%)</label>
+                    <input type="number" id="st-critical" class="st-input" min="1" max="99" placeholder="e.g. 90" />
+                    <span class="st-hint">Clients at or above this % are shown as Critical</span>
+                </div>
+                <div class="st-feedback" id="st-feedback"></div>
+            </div>
+            <div class="st-footer">
+                <button class="st-btn-cancel" onclick="closeSettings()">Cancel</button>
+                <button class="st-btn-save" id="st-save-btn" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/toast.js"></script>
+    <script src="/static/js/sidebar.js?v=3"></script>
+    <script>
+    (function () {
+
+        /* Live date */
+        function updateDate() {
+            var el = document.getElementById('live-date');
+            if (el) el.textContent = new Date().toLocaleDateString('en-IN', {
+                weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+            });
+        }
+        updateDate();
+        setInterval(updateDate, 60000);
+
+        /* State */
+        var _currentReport = null;
+        var _chartInstance = null;
+
+        /* ── Escape HTML ── */
+        function esc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        /* ── Load clients into dropdown ── */
+        async function loadClients() {
+            var sel = document.getElementById('rpt-client');
+            var fb  = document.getElementById('rpt-feedback');
+            if (!sel) return;
+            sel.disabled = true;
+            sel.innerHTML = '<option value="">Loading clients…</option>';
+            try {
+                var res = await fetch('/api/clients', {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (res.status === 401 || res.status === 403) {
+                    window.location.href = '/';
+                    return;
+                }
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                var data = await res.json();
+                if (data.status === 'ok' && Array.isArray(data.clients) && data.clients.length > 0) {
+                    sel.innerHTML = '<option value="">— Select a client —</option>';
+                    data.clients.forEach(function (c) {
+                        var opt = document.createElement('option');
+                        opt.value = String(c.id == null ? '' : c.id);
+                        opt.textContent = String(c.name == null ? c.id : c.name);
+                        sel.appendChild(opt);
+                    });
+                    sel.disabled = false;
+                    if (fb) { fb.textContent = ''; fb.className = 'ur-feedback'; }
+                } else {
+                    sel.innerHTML = '<option value="">No clients found</option>';
+                    if (fb) { fb.textContent = 'No clients were returned by the server.'; fb.className = 'ur-feedback error'; }
+                }
+            } catch (err) {
+                console.error('Client Usage Report: /api/clients failed', err);
+                sel.innerHTML = '<option value="">Unable to load clients</option>';
+                if (fb) { fb.textContent = 'Unable to load clients. Check the server/DB connection and refresh.'; fb.className = 'ur-feedback error'; }
+            }
+        }
+
+        /* ── Generate report ── */
+        window.generateReport = async function () {
+            var clientId  = document.getElementById('rpt-client').value.trim();
+            var startDate = document.getElementById('rpt-start').value;
+            var endDate   = document.getElementById('rpt-end').value;
+            var fb        = document.getElementById('rpt-feedback');
+            var btn       = document.getElementById('rpt-gen-btn');
+
+            fb.textContent = '';
+            fb.className   = 'ur-feedback';
+
+            if (!clientId) {
+                fb.textContent = 'Please select a client.';
+                fb.className   = 'ur-feedback error';
+                return;
+            }
+            if (!startDate || !endDate) {
+                fb.textContent = 'Please select both start and end dates.';
+                fb.className   = 'ur-feedback error';
+                return;
+            }
+            if (startDate > endDate) {
+                fb.textContent = 'Start date cannot be after end date.';
+                fb.className   = 'ur-feedback error';
+                return;
+            }
+
+            btn.disabled    = true;
+            btn.textContent = 'Loading…';
+            fb.textContent  = 'Fetching data…';
+            fb.className    = 'ur-feedback info';
+
+            try {
+                var url = '/api/client-usage-report?client_id=' + encodeURIComponent(clientId)
+                        + '&start_date=' + encodeURIComponent(startDate)
+                        + '&end_date='   + encodeURIComponent(endDate);
+                var res  = await fetch(url, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { 'Accept': 'application/json' } });
+                if (res.status === 401 || res.status === 403) { window.location.href = '/'; return; }
+                var data = await res.json();
+                if (!res.ok && data.status !== 'error') { throw new Error('HTTP ' + res.status); }
+
+                if (data.status === 'error') {
+                    fb.textContent = data.message || 'Failed to fetch data.';
+                    fb.className   = 'ur-feedback error';
+                    document.getElementById('rpt-results').style.display = 'none';
+                    return;
+                }
+                if (data.status === 'empty') {
+                    fb.textContent = 'No usage data found for the selected date range.';
+                    fb.className   = 'ur-feedback info';
+                    document.getElementById('rpt-results').style.display = 'none';
+                    return;
+                }
+
+                _currentReport = data;
+                fb.textContent = '';
+                fb.className   = 'ur-feedback';
+                document.getElementById('rpt-results').style.display = 'block';
+                renderResults(data);
+
+            } catch (err) {
+                console.error('Client Usage Report: generate failed', err);
+                fb.textContent = 'Unable to generate report. Check the server/DB connection and try again.';
+                fb.className   = 'ur-feedback error';
+            }
+
+            btn.disabled    = false;
+            btn.textContent = 'Generate Report';
+        };
+
+        /* ── Render results ── */
+        function renderResults(data) {
+            document.getElementById('rpt-results').style.display = 'block';
+
+            /* Chart title/sub */
+            document.getElementById('rpt-chart-title').textContent =
+                data.client_name + ' — Day-wise SMS Usage';
+            document.getElementById('rpt-chart-sub').textContent =
+                data.start_date_label + ' to ' + data.end_date_label;
+
+            /* Stats */
+            document.getElementById('stat-total').textContent    = data.total.toLocaleString();
+            document.getElementById('stat-period').textContent   = data.start_date_label + ' – ' + data.end_date_label;
+            document.getElementById('stat-avg').textContent      = Number(data.avg).toLocaleString();
+            if (data.peak_day) {
+                document.getElementById('stat-peak-count').textContent = data.peak_day.count.toLocaleString();
+                document.getElementById('stat-peak-date').textContent  = data.peak_day.date;
+            } else {
+                document.getElementById('stat-peak-count').textContent = '—';
+                document.getElementById('stat-peak-date').textContent  = '';
+            }
+            if (data.lowest_day) {
+                document.getElementById('stat-low-count').textContent = data.lowest_day.count.toLocaleString();
+                document.getElementById('stat-low-date').textContent  = data.lowest_day.date;
+            } else {
+                document.getElementById('stat-low-count').textContent = '—';
+                document.getElementById('stat-low-date').textContent  = '';
+            }
+
+            /* Table */
+            var tbody = document.getElementById('rpt-table-body');
+            tbody.innerHTML = data.daily.map(function (d) {
+                return '<tr><td>' + esc(d.label) + '</td><td style="text-align:right;font-weight:600;">'
+                     + d.count.toLocaleString() + '</td></tr>';
+            }).join('');
+
+            /* Chart */
+            renderChart(data.daily);
+
+            /* Reset action feedback */
+            var af = document.getElementById('rpt-action-feedback');
+            af.textContent = '';
+            af.className   = 'ur-action-feedback';
+            var sb = document.getElementById('rpt-send-btn');
+            if (sb) { sb.disabled = false; sb.textContent = 'Send Report to Client'; }
+        }
+
+        /* ── Chart ── */
+        function renderChart(daily) {
+            var ctx = document.getElementById('rpt-chart').getContext('2d');
+            if (_chartInstance) {
+                _chartInstance.destroy();
+                _chartInstance = null;
+            }
+            var labels = daily.map(function (d) { return d.label; });
+            var counts = daily.map(function (d) { return d.count; });
+
+            _chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'SMS Used',
+                        data: counts,
+                        borderColor: '#00B5A5',
+                        backgroundColor: 'rgba(0,181,165,0.08)',
+                        borderWidth: 2.5,
+                        pointBackgroundColor: '#00B5A5',
+                        pointRadius: daily.length > 60 ? 0 : 3,
+                        pointHoverRadius: 5,
+                        tension: 0.3,
+                        fill: true,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (ctx) {
+                                    return ' ' + ctx.parsed.y.toLocaleString() + ' SMS';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#f1f5f9' },
+                            ticks: {
+                                color: '#94a3b8',
+                                font: { size: 11 },
+                                maxTicksLimit: 15,
+                                maxRotation: 45,
+                            }
+                        },
+                        y: {
+                            grid: { color: '#f1f5f9' },
+                            ticks: {
+                                color: '#94a3b8',
+                                font: { size: 11 },
+                                callback: function (v) { return v.toLocaleString(); }
+                            },
+                            beginAtZero: true,
+                        }
+                    }
+                }
+            });
+        }
+
+        /* ── Download report ── */
+        window.downloadReport = function () {
+            var clientId  = document.getElementById('rpt-client').value.trim();
+            var startDate = document.getElementById('rpt-start').value;
+            var endDate   = document.getElementById('rpt-end').value;
+            if (!clientId || !startDate || !endDate) {
+                var af0 = document.getElementById('rpt-action-feedback');
+                if (af0) { af0.textContent = 'Generate a report first by selecting a client and date range.'; af0.className = 'ur-action-feedback error'; }
+                return;
+            }
+            window.location.href = '/api/client-usage-report/download-detailed?client_id='
+                + encodeURIComponent(clientId)
+                + '&start_date=' + encodeURIComponent(startDate)
+                + '&end_date='   + encodeURIComponent(endDate);
+        };
+
+        /* ── Send report to client email ── */
+        window.sendReport = async function () {
+            if (!_currentReport) return;
+            var clientId  = document.getElementById('rpt-client').value.trim();
+            var startDate = document.getElementById('rpt-start').value;
+            var endDate   = document.getElementById('rpt-end').value;
+            var af        = document.getElementById('rpt-action-feedback');
+            var btn       = document.getElementById('rpt-send-btn');
+
+            af.textContent = '';
+            af.className   = 'ur-action-feedback';
+            btn.disabled    = true;
+            btn.textContent = 'Sending…';
+
+            try {
+                var res = await fetch('/api/client-usage-report/send-email', { credentials: 'same-origin',
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ client_id: clientId, start_date: startDate, end_date: endDate })
+                });
+                if (res.status === 401 || res.status === 403) { window.location.href = '/'; return; }
+                var data = await res.json();
+                if (data.status === 'ok') {
+                    var sentTo = (data.emails && data.emails.length)
+                        ? data.emails.join(', ')
+                        : 'client';
+                    af.textContent = 'Report sent successfully to ' + sentTo + '.';
+                    af.className   = 'ur-action-feedback success';
+                    if (window.showToast) showToast('Report sent to ' + sentTo + '.', 'success');
+                } else {
+                    af.textContent = data.message || 'Failed to send email.';
+                    af.className   = 'ur-action-feedback error';
+                    if (window.showToast) showToast(data.message || 'Failed to send email.', 'error');
+                }
+            } catch (_) {
+                af.textContent = 'Network error. Try again.';
+                af.className   = 'ur-action-feedback error';
+            }
+
+            btn.disabled    = false;
+            btn.textContent = 'Send Report to Client';
+        };
+
+        loadClients();
+
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Log · VAMS SMS Monitor</title>
+	    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+	    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <script>
+        window.CURRENT_USER = "{{ username }}";
+        window.CURRENT_ROLE = "{{ role }}";
+    </script>
+
+    <style>
+        .page-back-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 10px;border:1px solid #dbe2ea;border-radius:7px;color:#475569;background:#fff;text-decoration:none;font:500 12px/1 'Barlow Semi Condensed',sans-serif;}
+        .page-back-btn:hover{border-color:#30318C;color:#30318C;background:#f8fafc;}
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <img src="https://sms_monitor.vamsglobal.in/static/images/logo.png" alt="VAMS Global" class="sidebar-logo">
+			 <img src="http://127.0.0.1:8000/static/images/logo.png" alt="VAMS Global" class="sidebar-logo">
+        </div>
+
+        <nav class="sidebar-nav">
+            <a class="nav-item" id="trends-nav" href="/sms-trends" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>SMS Trends</span>
+            </a>
+            <a class="nav-item" href="/dashboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span>Dashboard</span>
+            </a>
+            <a class="nav-item" id="settings-nav" href="#" style="display:none" onclick="openSettings(); return false;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>Settings</span>
+            </a>
+            <div class="nav-group" id="master-user-group" style="display:none">
+                <button class="nav-item nav-group-btn" id="master-user-toggle" onclick="toggleMasterUser()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Master User</span>
+                    <svg class="chevron" id="master-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="master-panel" id="master-panel">
+                    <a class="nav-sub-item" href="/users">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>User Management</span>
+                    </a>
+                    <a class="nav-sub-item" href="/client-emails">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                        <span>Client Email</span>
+                    </a>
+                    <div class="nav-sub-divider"></div>
+                    <button class="nav-sub-item nav-sub-toggle" id="credit-usage-toggle" onclick="toggleCreditForm()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                        <span>Credit Usage</span>
+                        <svg class="chevron" id="credit-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="master-form" id="credit-form-panel" style="display:none">
+                        <div class="mf-group">
+                            <label class="mf-label">Client</label>
+                            <select id="mf-client" class="mf-select"><option value="">— Select client —</option></select>
+                        </div>
+                        <div class="mf-group">
+                            <label class="mf-label">SMS Credit Count</label>
+                            <input type="number" id="mf-sms-count" class="mf-input" placeholder="e.g. 10000" min="1" />
+                        </div>
+                        <div class="mf-group mf-date-row">
+                            <div class="mf-date-half">
+                                <label class="mf-label">Start Date</label>
+                                <input type="date" id="mf-start-date" class="mf-input" />
+                            </div>
+                            <div class="mf-date-half">
+                                <label class="mf-label">End Date</label>
+                                <input type="date" id="mf-end-date" class="mf-input" />
+                            </div>
+                        </div>
+                        <p class="mf-date-hint">Leave blank to add credits without an expiry window.</p>
+                        <button class="mf-submit" id="mf-submit-btn" onclick="assignCredits()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Assign Credits
+                        </button>
+                        <div class="mf-feedback" id="mf-feedback"></div>
+                    </div>
+                </div>
+            </div>
+            <a class="nav-item" id="usage-report-nav" href="/client-usage-report" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <span>Client Usage Report</span>
+            </a>
+            <a class="nav-item active" href="/audit-log">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span>Audit Log</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-user">
+                <div class="user-avatar" id="sidebar-avatar">A</div>
+                <div class="user-info">
+                    <span class="user-name"  id="sidebar-username">Admin</span>
+                    <span class="user-role"  id="sidebar-userrole">Administrator</span>
+                </div>
+            </div>
+            <a href="/logout" class="logout-btn" title="Sign out">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main">
+
+        <!-- Topbar -->
+        <header class="topbar">
+            <div class="topbar-left" style="display:flex;flex-direction:row;align-items:center;gap:12px;">
+                <a href="/dashboard" class="page-back-btn" aria-label="Back to Dashboard">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/><line x1="9" y1="12" x2="21" y2="12"/></svg>
+                    Back
+                </a>
+                <h1 class="page-title">Audit Log</h1>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-date" id="live-date"></div>
+            </div>
+        </header>
+
+        <div class="content">
+
+            <section class="table-section">
+                <div class="table-header">
+                    <div class="table-header-left">
+                        <h2 class="section-title">Activity Records</h2>
+                        <span class="section-sub" id="audit-count">Loading…</span>
+                    </div>
+                    <div class="table-header-right">
+                        <div class="search-wrap">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                            <input type="text" id="audit-user-input" placeholder="Filter by user…" />
+                        </div>
+                        <select id="audit-action-select" class="filter-select">
+                            <option value="">All actions</option>
+                            <option value="LOGIN">Login</option>
+                            <option value="LOGIN_FAILED">Login Failed</option>
+                            <option value="LOGIN_BLOCKED">Login Blocked</option>
+                            <option value="LOGOUT">Logout</option>
+                            <option value="VIEW_DASHBOARD">View Dashboard</option>
+                            <option value="VIEW_CLIENT_ANALYTICS">View Analytics</option>
+                            <option value="ASSIGN_CREDITS">Assign Credits</option>
+                            <option value="MANUAL_SYNC">Manual Sync</option>
+                            <option value="SEED_TEST_DATA">Seed Test Data</option>
+                            <option value="SEND_ALERT_EMAIL">Send Alert Email</option>
+                            <option value="SEND_REPORT_NOW">Send Report</option>
+                            <option value="SEND_CLIENT_REPORT">Send Client Report</option>
+                            <option value="CREATE_USER">Create User</option>
+                            <option value="ACTIVATE_USER">Activate User</option>
+                            <option value="DEACTIVATE_USER">Deactivate User</option>
+                            <option value="RESET_PASSWORD">Reset Password</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="data-table audit-table">
+                        <thead>
+                            <tr>
+                                <th class="audit-col-ts">Date / Time</th>
+                                <th class="audit-col-user">User</th>
+                                <th class="audit-col-action">Action</th>
+                                <th class="audit-col-target">Target</th>
+                                <th class="audit-col-detail">Detail</th>
+                                <th class="audit-col-ip">IP Address</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-body">
+                            <tr><td colspan="6" class="loading-row">
+                                <div class="loading-dots"><span></span><span></span><span></span></div>
+                            </td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="table-footer">
+                    <span id="audit-footer-count">—</span>
+                    <div class="pagination" id="audit-pagination"></div>
+                </div>
+            </section>
+
+        </div>
+
+        <footer class="page-footer">
+            <strong>VAMS Global</strong> &nbsp;&middot;&nbsp; VAMS SMS Monitor &nbsp;&middot;&nbsp; © 2026 &nbsp;&middot;&nbsp; Internal Use Only
+        </footer>
+    </div>
+
+    <!-- Settings modal -->
+    <div class="st-overlay" id="st-overlay" style="display:none" onclick="if(event.target===this)closeSettings()">
+        <div class="st-modal">
+            <div class="st-header">
+                <div class="st-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Alert Thresholds
+                </div>
+                <button class="st-close" onclick="closeSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="st-body">
+                <p class="st-desc">Set the usage % at which clients are flagged as Warning or Critical. Changes apply immediately — no restart needed.</p>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-warning"></span>Warning Threshold (%)</label>
+                    <input type="number" id="st-warning" class="st-input" min="1" max="99" placeholder="e.g. 50" />
+                    <span class="st-hint">Clients at or above this % are shown as Warning</span>
+                </div>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-critical"></span>Critical Threshold (%)</label>
+                    <input type="number" id="st-critical" class="st-input" min="1" max="99" placeholder="e.g. 90" />
+                    <span class="st-hint">Clients at or above this % are shown as Critical</span>
+                </div>
+                <div class="st-feedback" id="st-feedback"></div>
+            </div>
+            <div class="st-footer">
+                <button class="st-btn-cancel" onclick="closeSettings()">Cancel</button>
+                <button class="st-btn-save" id="st-save-btn" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>    <script src="/static/js/sidebar.js?v=3"></script>    <script src="/static/js/audit_log.js?v=1"></script>
+</body>
+</html>

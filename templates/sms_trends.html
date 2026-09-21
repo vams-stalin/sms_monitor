@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS Trends · VAMS SMS Monitor</title>
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        window.CURRENT_USER = "{{ username }}";
+        window.CURRENT_ROLE = "{{ role }}";
+    </script>
+    <style>
+        .trend-controls {
+            display: flex;
+            gap: 8px;
+            padding: 22px 28px 0;
+        }
+        .period-btn {
+            padding: 8px 22px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
+            border: 1.5px solid #e2e8f0;
+            background: #fff;
+            color: #64748b;
+            cursor: pointer;
+            transition: background .15s, border-color .15s, color .15s;
+        }
+        .period-btn:hover     { border-color: #1d4e8f; color: #1d4e8f; }
+        .period-btn.active    { background: #1d4e8f; border-color: #1d4e8f; color: #fff; }
+
+        .trend-stats {
+            display: flex;
+            gap: 16px;
+            padding: 20px 28px 0;
+        }
+        .trend-stat-card {
+            flex: 1;
+            background: #fff;
+            border: 1px solid #e8edf3;
+            border-radius: 12px;
+            padding: 18px 22px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.05);
+        }
+        .trend-stat-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: .6px;
+            color: #94a3b8;
+            margin-bottom: 8px;
+        }
+        .trend-stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #0f172a;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+        }
+        .trend-stat-sub {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 5px;
+        }
+
+        .trend-chart-card {
+            margin: 20px 28px 28px;
+            background: #fff;
+            border: 1px solid #e8edf3;
+            border-radius: 12px;
+            padding: 24px 24px 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.05);
+        }
+        .trend-chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .trend-chart-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        .trend-chart-sub {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 2px;
+        }
+        .trend-chart-wrap {
+            position: relative;
+            height: 360px;
+        }
+        .trend-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 360px;
+            color: #94a3b8;
+            font-size: 13px;
+            gap: 10px;
+        }
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <img src="/static/images/logo.png" alt="VAMS Global" class="sidebar-logo">
+        </div>
+
+        <nav class="sidebar-nav">
+            <a class="nav-item active" href="/sms-trends">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>SMS Trends</span>
+            </a>
+            <a class="nav-item" href="/dashboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <span>Dashboard</span>
+            </a>
+            <a class="nav-item" id="settings-nav" href="#" style="display:none" onclick="openSettings(); return false;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>Settings</span>
+            </a>
+            <div class="nav-group" id="master-user-group" style="display:none">
+                <button class="nav-item nav-group-btn" id="master-user-toggle" onclick="toggleMasterUser()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>Master User</span>
+                    <svg class="chevron" id="master-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="master-panel" id="master-panel">
+                    <a class="nav-sub-item" href="/users">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>User Management</span>
+                    </a>
+                    <a class="nav-sub-item" href="/client-emails">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                        <span>Client Email</span>
+                    </a>
+                    <div class="nav-sub-divider"></div>
+                    <button class="nav-sub-item nav-sub-toggle" id="credit-usage-toggle" onclick="toggleCreditForm()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                        <span>Credit Usage</span>
+                        <svg class="chevron" id="credit-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="master-form" id="credit-form-panel" style="display:none">
+                        <div class="mf-group">
+                            <label class="mf-label">Client</label>
+                            <select id="mf-client" class="mf-select"><option value="">— Select client —</option></select>
+                        </div>
+                        <div class="mf-group">
+                            <label class="mf-label">SMS Credit Count</label>
+                            <input type="number" id="mf-sms-count" class="mf-input" placeholder="e.g. 10000" min="1" />
+                        </div>
+                        <div class="mf-group mf-date-row">
+                            <div class="mf-date-half">
+                                <label class="mf-label">Start Date</label>
+                                <input type="date" id="mf-start-date" class="mf-input" />
+                            </div>
+                            <div class="mf-date-half">
+                                <label class="mf-label">End Date</label>
+                                <input type="date" id="mf-end-date" class="mf-input" />
+                            </div>
+                        </div>
+                        <p class="mf-date-hint">Leave blank to add credits without an expiry window.</p>
+                        <button class="mf-submit" id="mf-submit-btn" onclick="assignCredits()">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Assign Credits
+                        </button>
+                        <div class="mf-feedback" id="mf-feedback"></div>
+                    </div>
+                </div>
+            </div>
+            <a class="nav-item" id="usage-report-nav" href="/client-usage-report" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <span>Client Usage Report</span>
+            </a>
+            <a class="nav-item" id="audit-log-nav" href="/audit-log" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span>Audit Log</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="sidebar-user">
+                <div class="user-avatar" id="sidebar-avatar">A</div>
+                <div class="user-info">
+                    <span class="user-name"  id="sidebar-username">Admin</span>
+                    <span class="user-role"  id="sidebar-userrole">Administrator</span>
+                </div>
+            </div>
+            <a href="/logout" class="logout-btn" title="Sign out">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main">
+
+        <!-- Topbar -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <h1 class="page-title">SMS Trends</h1>
+            </div>
+            <div class="topbar-right">
+                <div class="topbar-date" id="live-date"></div>
+            </div>
+        </header>
+
+        <!-- Period toggle -->
+        <div class="trend-controls">
+            <button type="button" class="period-btn active" id="btn-weekly">Weekly</button>
+            <button type="button" class="period-btn" id="btn-monthly">Monthly</button>
+            <button type="button" class="period-btn" id="btn-yearly">Yearly</button>
+        </div>
+
+        <!-- Summary stats -->
+        <div class="trend-stats">
+            <div class="trend-stat-card">
+                <div class="trend-stat-label">Total SMS</div>
+                <div class="trend-stat-value" id="stat-total">—</div>
+                <div class="trend-stat-sub"   id="stat-range">Loading…</div>
+            </div>
+            <div class="trend-stat-card">
+                <div class="trend-stat-label">Peak</div>
+                <div class="trend-stat-value" id="stat-peak">—</div>
+                <div class="trend-stat-sub"   id="stat-peak-lbl">—</div>
+            </div>
+            <div class="trend-stat-card">
+                <div class="trend-stat-label">Average</div>
+                <div class="trend-stat-value" id="stat-avg">—</div>
+                <div class="trend-stat-sub"   id="stat-avg-lbl">per period</div>
+            </div>
+        </div>
+
+        <!-- Chart card -->
+        <div class="trend-chart-card">
+            <div class="trend-chart-header">
+                <div>
+                    <div class="trend-chart-title" id="chart-title">Weekly Total SMS Usage</div>
+                    <div class="trend-chart-sub"   id="chart-sub">Last 12 weeks</div>
+                </div>
+            </div>
+            <div class="trend-chart-wrap">
+                <!-- Loading state -->
+                <div class="trend-state" id="chart-loading">
+                    <svg class="spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.2" stroke-linecap="round">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                    </svg>
+                    Loading…
+                </div>
+                <!-- Empty state -->
+                <div class="trend-state" id="chart-empty" style="display:none;">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                    </svg>
+                    No data available for this period
+                </div>
+                <!-- Canvas -->
+                <canvas id="trend-chart" style="display:none;"></canvas>
+            </div>
+        </div>
+
+        <footer class="page-footer">
+            <strong>VAMS Global</strong> &nbsp;&middot;&nbsp; VAMS SMS Monitor &nbsp;&middot;&nbsp; © 2026 &nbsp;&middot;&nbsp; Internal Use Only
+        </footer>
+    </div>
+
+    <script>
+        const META = {
+            weekly:  { title: 'Weekly Total SMS Usage',  sub: 'Last 12 weeks',  avg: 'per week'  },
+            monthly: { title: 'Monthly Total SMS Usage', sub: 'Last 12 months', avg: 'per month' },
+            yearly:  { title: 'Yearly Total SMS Usage',  sub: 'All years',      avg: 'per year'  },
+        };
+
+        let chart = null;
+        let requestNo = 0;
+
+        function fmt(n) {
+            const value = Number(n);
+            if (!Number.isFinite(value)) return '—';
+            return value.toLocaleString('en-IN');
+        }
+
+        function setActivePeriod(period) {
+            ['weekly', 'monthly', 'yearly'].forEach(p => {
+                const btn = document.getElementById('btn-' + p);
+                if (btn) btn.classList.toggle('active', p === period);
+            });
+        }
+
+        async function loadTrend(period) {
+            if (!META[period]) period = 'weekly';
+
+            const currentRequest = ++requestNo;
+            setActivePeriod(period);
+
+            const loading = document.getElementById('chart-loading');
+            const empty = document.getElementById('chart-empty');
+            const canvas = document.getElementById('trend-chart');
+
+            loading.style.display = 'flex';
+            empty.style.display = 'none';
+            canvas.style.display = 'none';
+
+            try {
+                // Cache-busting prevents the browser from reusing an old trend response.
+                const response = await fetch(
+                    '/api/sms-trend?period=' + encodeURIComponent(period) + '&_=' + Date.now(),
+                    { method: 'GET', credentials: 'same-origin', cache: 'no-store' }
+                );
+
+                if (response.status === 401 || response.status === 403) {
+                    window.location.href = '/';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error('Trend API returned HTTP ' + response.status);
+                }
+
+                const json = await response.json();
+
+                // Ignore an older request if the user clicked another period quickly.
+                if (currentRequest !== requestNo) return;
+
+                renderTrend(json);
+            } catch (error) {
+                console.error('[SMS Trends] Failed to load ' + period + ':', error);
+                loading.style.display = 'none';
+                empty.style.display = 'flex';
+            }
+        }
+
+        function renderTrend(json) {
+            document.getElementById('chart-loading').style.display = 'none';
+
+            const labels = Array.isArray(json.labels) ? json.labels : [];
+            const data = Array.isArray(json.data) ? json.data.map(Number) : [];
+            const period = META[json.period] ? json.period : 'weekly';
+            const meta = META[period];
+
+            document.getElementById('chart-title').textContent = meta.title;
+            document.getElementById('chart-sub').textContent = meta.sub;
+
+            const total = data.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
+            const peak = data.length ? Math.max(...data) : 0;
+            const peakIdx = data.length ? data.indexOf(peak) : -1;
+            const avg = data.length ? Math.round(total / data.length) : 0;
+
+            document.getElementById('stat-total').textContent = fmt(total);
+            document.getElementById('stat-range').textContent = meta.sub;
+            document.getElementById('stat-peak').textContent = fmt(peak);
+            document.getElementById('stat-peak-lbl').textContent = peakIdx >= 0 ? (labels[peakIdx] || '—') : '—';
+            document.getElementById('stat-avg').textContent = fmt(avg);
+            document.getElementById('stat-avg-lbl').textContent = meta.avg;
+
+            if (!labels.length || !data.length) {
+                document.getElementById('chart-empty').style.display = 'flex';
+                return;
+            }
+
+            const canvas = document.getElementById('trend-chart');
+            const ctx = canvas.getContext('2d');
+
+            if (chart) {
+                chart.destroy();
+                chart = null;
+            }
+
+            const grad = ctx.createLinearGradient(0, 0, 0, 360);
+            grad.addColorStop(0, 'rgba(29, 78, 143, 0.16)');
+            grad.addColorStop(1, 'rgba(29, 78, 143, 0.0)');
+
+            canvas.style.display = 'block';
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Total SMS',
+                        data: data,
+                        borderColor: '#1d4e8f',
+                        backgroundColor: grad,
+                        borderWidth: 2.5,
+                        pointRadius: 4,
+                        pointHoverRadius: 7,
+                        pointBackgroundColor: '#1d4e8f',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#0f172a',
+                            padding: 12,
+                            cornerRadius: 8,
+                            titleFont: { family: 'Barlow Semi Condensed', size: 12 },
+                            bodyFont: { family: 'Barlow Semi Condensed', size: 13, weight: '600' },
+                            callbacks: {
+                                label: ctx => '  ' + fmt(ctx.parsed.y) + ' SMS'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: '#f1f5f9', drawBorder: false },
+                            ticks: { font: { size: 12, family: 'Barlow Semi Condensed' }, color: '#64748b' }
+                        },
+                        y: {
+                            grid: { color: '#f1f5f9', drawBorder: false },
+                            ticks: {
+                                font: { size: 12, family: 'Barlow Semi Condensed' },
+                                color: '#64748b',
+                                callback: value => fmt(value)
+                            },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Use event delegation so the buttons continue to work even if the page
+        // markup is refreshed/re-rendered. This is intentionally independent of
+        // inline onclick handlers.
+        document.addEventListener('click', function (event) {
+            const button = event.target.closest('.period-btn');
+            if (!button) return;
+
+            event.preventDefault();
+            const id = button.id || '';
+            const period = id.replace('btn-', '');
+            if (META[period]) loadTrend(period);
+        });
+
+        function tick() {
+            const el = document.getElementById('live-date');
+            if (el) el.textContent = new Date().toLocaleString('en-IN', {
+                weekday: 'short', day: '2-digit', month: 'short',
+                year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        tick();
+        setInterval(tick, 1000);
+        loadTrend('weekly');
+    </script>
+    <!-- Settings modal -->
+    <div class="st-overlay" id="st-overlay" style="display:none" onclick="if(event.target===this)closeSettings()">
+        <div class="st-modal">
+            <div class="st-header">
+                <div class="st-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Alert Thresholds
+                </div>
+                <button class="st-close" onclick="closeSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="st-body">
+                <p class="st-desc">Set the usage % at which clients are flagged as Warning or Critical. Changes apply immediately — no restart needed.</p>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-warning"></span>Warning Threshold (%)</label>
+                    <input type="number" id="st-warning" class="st-input" min="1" max="99" placeholder="e.g. 50" />
+                    <span class="st-hint">Clients at or above this % are shown as Warning</span>
+                </div>
+                <div class="st-field">
+                    <label class="st-label"><span class="st-dot st-dot-critical"></span>Critical Threshold (%)</label>
+                    <input type="number" id="st-critical" class="st-input" min="1" max="99" placeholder="e.g. 90" />
+                    <span class="st-hint">Clients at or above this % are shown as Critical</span>
+                </div>
+                <div class="st-feedback" id="st-feedback"></div>
+            </div>
+            <div class="st-footer">
+                <button class="st-btn-cancel" onclick="closeSettings()">Cancel</button>
+                <button class="st-btn-save" id="st-save-btn" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+    <script src="/static/js/toast.js"></script>
+    <script src="/static/js/sidebar.js?v=3"></script>
+</body>
+</html>

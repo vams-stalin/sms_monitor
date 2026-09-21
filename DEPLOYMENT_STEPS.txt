@@ -1,0 +1,145 @@
+================================================================
+  VAMS SMS MONITOR - IIS DEPLOYMENT STEPS
+================================================================
+
+PREREQUISITES (install these on the server before starting)
+----------------------------------------------------------------
+1. Python 3.11
+   Download: https://www.python.org/downloads/release/python-3119/
+   During install: CHECK "Add Python to PATH"
+
+2. Microsoft ODBC Driver 18 for SQL Server
+   Download: https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
+   (Required for database connectivity — this is NOT a Python package)
+
+3. HttpPlatformHandler for IIS
+   Download: https://www.iis.net/downloads/microsoft/httpplatformhandler
+   (Allows IIS to host Python apps)
+
+
+STEP 1 — EXTRACT THE ZIP
+----------------------------------------------------------------
+Extract the zip to:
+   C:\inetpub\wwwroot\sms_monitor\
+
+After extraction it should look like:
+   C:\inetpub\wwwroot\sms_monitor\main.py
+   C:\inetpub\wwwroot\sms_monitor\web.config
+   C:\inetpub\wwwroot\sms_monitor\.env
+   C:\inetpub\wwwroot\sms_monitor\requirements.txt
+   ... and so on
+
+
+STEP 2 — FIND PYTHON PATH AND UPDATE web.config
+----------------------------------------------------------------
+Open Command Prompt and run:
+   where python
+
+You will get output like:
+   C:\Python311\python.exe   (or whatever is installed)
+
+Open:
+   C:\inetpub\wwwroot\sms_monitor\web.config
+
+Find this line:
+   <httpPlatform processPath="C:\python3.11.4\python.exe"
+
+Replace C:\python3.11.4\python.exe with the path from "where python"
+Example:
+   <httpPlatform processPath="C:\Python311\python.exe"
+
+Save the file.
+
+
+STEP 3 — INSTALL PYTHON PACKAGES
+----------------------------------------------------------------
+Open Command Prompt and run (use the SAME Python path from Step 2):
+
+   C:\Python311\python.exe -m pip install -r C:\inetpub\wwwroot\sms_monitor\requirements.txt
+
+Wait for all packages to finish installing.
+
+
+STEP 4 — GRANT LOGS FOLDER PERMISSION
+----------------------------------------------------------------
+IIS needs write access to the logs folder to record errors.
+
+   1. Right-click: C:\inetpub\wwwroot\sms_monitor\logs
+   2. Properties → Security tab → Edit → Add
+   3. Type: IIS_IUSRS  then click "Check Names" → OK
+   4. Tick "Modify" → OK → OK
+
+   NOTE: If deploying to C:\inetpub\wwwroot\ the main site folder
+   permissions are already handled by IIS. Only the logs folder
+   needs this extra step.
+
+
+STEP 5 — CREATE THE IIS SITE
+----------------------------------------------------------------
+   1. Open IIS Manager (search "IIS" in Start Menu, Run as Administrator)
+   2. Right-click "Sites" in the left panel → "Add Website"
+   3. Fill in:
+        Site name:     sms-monitor
+        Physical path: C:\inetpub\wwwroot\sms_monitor
+        Port:          80  (or 443 for HTTPS)
+        Host name:     yourdomain.com  (e.g. vamsglobal.com)
+   4. Click OK
+
+
+STEP 6 — CONFIGURE THE APP POOL
+----------------------------------------------------------------
+   1. Click "Application Pools" in the left panel
+   2. Find "sms-monitor" in the list → Right-click → Basic Settings
+        .NET CLR Version → set to: No Managed Code
+        Click OK
+   3. Right-click again → Advanced Settings
+        Enable 32-bit Applications → set to: False
+        Click OK
+
+
+STEP 7 — VERIFY THE SITE IS RUNNING
+----------------------------------------------------------------
+   1. In IIS Manager click "sms-monitor" → click "Browse *:80 (http)"
+      in the right panel — this opens the site in a browser
+
+   2. If you see a 500 error, check the log file at:
+        C:\inetpub\wwwroot\sms_monitor\logs\uvicorn.log
+      This file shows the exact Python error.
+
+   3. Common errors and fixes:
+        "python.exe not found"     → Python path in web.config is wrong (redo Step 2)
+        "No module named uvicorn"  → pip install was not run (redo Step 3)
+        "Cannot connect to DB"     → ODBC Driver 18 not installed (see Prerequisites)
+        "Login page but no data"   → .env file missing or DB server unreachable
+
+
+STEP 8 — POINT YOUR DOMAIN TO THE SERVER
+----------------------------------------------------------------
+   Update your DNS A record to point the domain to this server's IP.
+   Once DNS propagates (up to 24 hours), the site will be accessible
+   at your domain.
+
+
+================================================================
+  TROUBLESHOOTING
+================================================================
+
+Error 500.19 — Permissions
+   The App Pool cannot read the site folder.
+   Grant IIS_IUSRS Read & Execute on C:\inetpub\wwwroot\sms_monitor\
+
+Error 502.3 — Bad Gateway
+   Python failed to start. Check:
+     a) web.config processPath matches "where python" output
+     b) pip install was run with the same Python
+     c) logs\uvicorn.log for the exact error
+
+Error 500.21 — Module not found
+   HttpPlatformHandler is not installed. See Prerequisites above.
+
+App starts but database shows no data
+   ODBC Driver 18 for SQL Server is not installed. See Prerequisites.
+   Also verify the server can reach DB_SERVER in the .env file
+   (firewall port 1433 must be open to that IP).
+
+================================================================
