@@ -108,7 +108,6 @@ limiter   = Limiter(key_func=get_remote_address)
 async def lifespan(app: FastAPI):
     # All startup jobs run in the background — server binds immediately without waiting for DB.
     scheduler.add_job(ensure_schema,              "date", id="startup_schema", next_run_time=datetime.now())
-    scheduler.add_job(ensure_today_yesterday_data,"date", id="startup_seed",   next_run_time=datetime.now() + timedelta(seconds=5))
     scheduler.add_job(expire_validity_credits,    "date", id="startup_expire", next_run_time=datetime.now() + timedelta(seconds=15))
 
     scheduler.add_job(sync_sms_usage, "interval", hours=1, id="sms_sync",

@@ -319,10 +319,11 @@
             canvas.style.display = 'none';
 
             try {
-                // Cache-busting prevents the browser from reusing an old trend response.
+                // The server caches the expensive DB aggregation. Keep the request URL
+                // stable so the browser can reuse the small JSON response as well.
                 const response = await fetch(
-                    '/api/sms-trend?period=' + encodeURIComponent(period) + '&_=' + Date.now(),
-                    { method: 'GET', credentials: 'same-origin', cache: 'no-store' }
+                    '/api/sms-trend?period=' + encodeURIComponent(period),
+                    { method: 'GET', credentials: 'same-origin' }
                 );
 
                 if (response.status === 401 || response.status === 403) {

@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import random
 import smtplib
@@ -53,6 +54,14 @@ def generate_report_from_template(client_name, kiosk_id, start_date, end_date, r
     # VML picture, not as a normal openpyxl image.
     wb = openpyxl.load_workbook(REPORT_TEMPLATE_PATH)
     ws = wb.active
+    # The template contains a total formula. Avoid an unnecessary full workbook
+    # recalculation during server-side generation; Excel recalculates on open.
+    try:
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = False
+        wb.calculation.calcMode = "auto"
+    except Exception:
+        pass
 
     ws["A3"] = f"Client Name : {client_name}"
     ws["A4"] = f"ID : {kiosk_id}"
@@ -68,7 +77,8 @@ def generate_report_from_template(client_name, kiosk_id, start_date, end_date, r
         ws.cell(row=r, column=3, value=message)
         ws.cell(row=r, column=4, value=sent_time)
         ws.cell(row=r, column=5, value=len(message or ""))
-        ws.cell(row=r, column=6, value=1)
+        sms_segments = max(1, int(math.ceil(len(message or '') / 160.0)))
+        ws.cell(row=r, column=6, value=sms_segments)
         row_count += 1
 
     last_row = start_row + max(row_count, 1) - 1
@@ -258,11 +268,22 @@ def generate_detailed_sms_report(client_id, start_date=None, end_date=None):
         """
         params = [client_id]
         if start_date:
-            query += " AND CAST(SentTime AS DATE) >= ?"
-            params.append(start_date)
+            # Keep the predicate sargable so SQL Server can use an index on
+            # (senderCompId, SentTime) instead of applying CAST() to SentTime.
+            if isinstance(start_date, str):
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            else:
+                start_dt = datetime.combine(start_date, datetime.min.time())
+            query += " AND SentTime >= ?"
+            params.append(start_dt)
         if end_date:
-            query += " AND CAST(SentTime AS DATE) <= ?"
-            params.append(end_date)
+            # Exclusive next-day boundary includes the complete end date.
+            if isinstance(end_date, str):
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            else:
+                end_dt = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
+            query += " AND SentTime < ?"
+            params.append(end_dt)
         query += " ORDER BY SentTime DESC"
 
         cursor.execute(query, params)
@@ -312,6 +333,12 @@ def invalidate_dashboard_cache():
     _dcache_alerts["data"]  = None
     _dcache_alerts["ts"]    = None
     _dcache_analytics.clear()
+    # Trend results are derived from ClientSmsUsageDaily_Vtb, so clear them
+    # after a synchronization/write. The guard avoids import-order issues.
+    if "_trend_cache" in globals():
+        for entry in _trend_cache.values():
+            entry["data"] = None
+            entry["ts"] = None
 
 
 def get_thresholds() -> dict:
@@ -458,6 +485,20 @@ def ensure_schema():
                 CreatedDate DATETIME      NOT NULL DEFAULT GETDATE(),
                 CONSTRAINT UQ_ClientDate UNIQUE (ClientId, UsageDate)
             )
+        """)
+
+        # Trend/report queries filter by UsageDate. The existing unique index
+        # (ClientId, UsageDate) is ideal for client analytics but not for
+        # cross-client trend aggregation, so add a date-leading index once.
+        cursor.execute("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE object_id = OBJECT_ID('ClientSmsUsageDaily_Vtb')
+                  AND name = 'IX_ClientSmsUsageDaily_UsageDate_ClientId'
+            )
+            CREATE INDEX IX_ClientSmsUsageDaily_UsageDate_ClientId
+                ON ClientSmsUsageDaily_Vtb (UsageDate, ClientId)
+                INCLUDE (SmsCount)
         """)
 
         # ── SmsMonitorUsers_Vtb ───────────────────────────────────────
@@ -3234,37 +3275,33 @@ def cleanup_orphaned_rows() -> dict:
 
 
 def sync_sms_usage():
-    """
-    Syncs real SMS usage from Smslog_Vtb into ClientSmsUsageDaily_Vtb and ClientSmsCredit_Vtb.
+    """Synchronize the complete available SMS history into daily usage.
 
-    Processes the last 30 days so historical data is backfilled on first run,
-    and today's data is always kept current on hourly runs.
-
-    Flow:
-      1. Aggregate SMS per client per day from Smslog_Vtb (last 30 days)
-      2. Upsert each day's count into ClientSmsUsageDaily_Vtb
-      3. For each affected client, recalculate total UsedSMS from ClientSmsUsageDaily_Vtb
-      4. Update ClientSmsCredit_Vtb (UsedSMS, RemainingSMS, UsagePercent)
+    The source of truth is Smslog_Vtb.  senderCompId is the authoritative
+    client identifier and is matched to ClientSmsCredit_Vtb.ClientId.
+    No artificial/test usage is created here.
     """
     try:
-        conn   = get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
 
-        # ── Step 1+2: Aggregate from Smslog_Vtb and upsert ──────────────────
+        # Rebuild/update every available historical day from the source table.
+        # Dashboard usage is based on actual SMS rows, so one row = one SMS.
+        # Do not require a credit row here: historical usage should still be
+        # captured even when an admin has not yet created ClientSmsCredit_Vtb.
         cursor.execute("""
             MERGE ClientSmsUsageDaily_Vtb AS target
             USING (
                 SELECT
-                    s.senderCompId                                                      AS ClientId,
-                    CAST(s.SentTime AS DATE)                                            AS UsageDate,
-                    SUM(CEILING(LEN(LTRIM(RTRIM(ISNULL(s.Message, '')))) / 160.0))     AS SmsCount
+                    s.senderCompId AS ClientId,
+                    CAST(s.SentTime AS DATE) AS UsageDate,
+                    COUNT(*) AS SmsCount
                 FROM Smslog_Vtb s
-                INNER JOIN ClientSmsCredit_Vtb c ON s.senderCompId = c.ClientId
-                WHERE CAST(s.SentTime AS DATE) >= DATEADD(DAY, -30, CAST(GETDATE() AS DATE))
-                  AND s.senderCompId IS NOT NULL
+                WHERE s.senderCompId IS NOT NULL
+                  AND s.SentTime IS NOT NULL
                 GROUP BY s.senderCompId, CAST(s.SentTime AS DATE)
             ) AS source
-            ON  target.ClientId  = source.ClientId
+            ON target.ClientId = source.ClientId
             AND target.UsageDate = source.UsageDate
             WHEN MATCHED THEN
                 UPDATE SET target.SmsCount = source.SmsCount
@@ -3274,38 +3311,29 @@ def sync_sms_usage():
         """)
         synced_rows = cursor.rowcount
 
-        # ── Step 3+4: Recalculate totals scoped to each client's validity window ─
-        # For clients with ValidityStartDate: sum only within [StartDate, EndDate].
-        # For all others: default 30-day window.
+        # UsedSMS is the sum of all synchronized historical usage, constrained
+        # only by an explicitly configured validity window when one exists.
         cursor.execute("""
             ;WITH usage_scoped AS (
                 SELECT
                     c.ClientId,
-                    ISNULL(SUM(d.SmsCount), 0) AS ScopedUsed
+                    ISNULL(SUM(d.SmsCount), 0) AS TotalUsed
                 FROM ClientSmsCredit_Vtb c
                 LEFT JOIN ClientSmsUsageDaily_Vtb d
-                    ON d.ClientId  = c.ClientId
-                   AND d.UsageDate >= ISNULL(c.ValidityStartDate,
-                                             CAST(DATEADD(DAY, -30, GETDATE()) AS DATE))
-                   AND d.UsageDate <= CASE
-                           WHEN c.ValidityEndDate IS NOT NULL
-                            AND c.ValidityEndDate < CAST(GETDATE() AS DATE)
-                           THEN c.ValidityEndDate
-                           ELSE CAST(GETDATE() AS DATE)
-                       END
+                    ON d.ClientId = c.ClientId
+                   AND (c.ValidityStartDate IS NULL OR d.UsageDate >= c.ValidityStartDate)
+                   AND (c.ValidityEndDate IS NULL OR d.UsageDate <= c.ValidityEndDate)
                 GROUP BY c.ClientId
             )
             UPDATE c
-            SET
-                c.UsedSMS      = u.ScopedUsed,
+            SET c.UsedSMS = u.TotalUsed,
                 c.RemainingSMS = CASE
-                    WHEN c.AllocatedSMS > u.ScopedUsed
-                    THEN c.AllocatedSMS - u.ScopedUsed
+                    WHEN c.AllocatedSMS > u.TotalUsed THEN c.AllocatedSMS - u.TotalUsed
                     ELSE 0
                 END,
                 c.ModifiedDate = GETDATE()
             FROM ClientSmsCredit_Vtb c
-            INNER JOIN usage_scoped u ON c.ClientId = u.ClientId
+            INNER JOIN usage_scoped u ON c.ClientId = u.ClientId;
         """)
         affected_clients = cursor.rowcount
 
@@ -3315,9 +3343,9 @@ def sync_sms_usage():
 
         global _last_synced_at
         _last_synced_at = datetime.now()
-        invalidate_dashboard_cache()   # force fresh data on next load
+        invalidate_dashboard_cache()
 
-        print(f"[SYNC] {synced_rows} day-rows upserted, {affected_clients} client(s) recalculated.")
+        print(f"[SYNC] {synced_rows} historical day-rows upserted, {affected_clients} client(s) recalculated.")
         cleanup_orphaned_rows()
         return {"synced_rows": synced_rows, "affected_clients": affected_clients}
 
@@ -3545,90 +3573,46 @@ def seed_test_data():
 
 
 def ensure_today_yesterday_data():
-    """
-    Called once on startup. Bulk-inserts today and yesterday rows for every client
-    that is missing them — pure set-based SQL, no Python loops, runs in milliseconds.
+    """Reconcile credit totals from real synchronized usage only.
 
-    Uses the client's own historical average as the seed value so numbers look
-    realistic from the first page load. Falls back to 500/300 for brand-new clients.
-    Also recalculates ClientSmsCredit_Vtb totals for any client that got new rows.
+    This function intentionally does not manufacture today/yesterday SMS rows.
+    Missing dates must remain zero unless Smslog_Vtb contains actual records.
     """
     try:
-        conn   = get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
-
-        # ── Insert yesterday for clients missing it ────────────────────
         cursor.execute("""
-            INSERT INTO ClientSmsUsageDaily_Vtb (ClientId, UsageDate, SmsCount, CreatedDate)
-            SELECT
-                c.ClientId,
-                CAST(DATEADD(DAY, -1, GETDATE()) AS DATE),
-                ISNULL((
-                    SELECT AVG(SmsCount)
-                    FROM ClientSmsUsageDaily_Vtb h WITH (NOLOCK)
-                    WHERE h.ClientId = c.ClientId
-                ), 0),
-                GETDATE()
-            FROM ClientSmsCredit_Vtb c WITH (NOLOCK)
-            WHERE NOT EXISTS (
-                SELECT 1 FROM ClientSmsUsageDaily_Vtb d WITH (NOLOCK)
-                WHERE d.ClientId  = c.ClientId
-                  AND d.UsageDate = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE)
+            ;WITH usage_scoped AS (
+                SELECT
+                    c.ClientId,
+                    ISNULL(SUM(d.SmsCount), 0) AS TotalUsed
+                FROM ClientSmsCredit_Vtb c
+                LEFT JOIN ClientSmsUsageDaily_Vtb d
+                    ON d.ClientId = c.ClientId
+                   AND (c.ValidityStartDate IS NULL OR d.UsageDate >= c.ValidityStartDate)
+                   AND (c.ValidityEndDate IS NULL OR d.UsageDate <= c.ValidityEndDate)
+                GROUP BY c.ClientId
             )
-        """)
-        yesterday_inserted = cursor.rowcount
-
-        # ── Insert today for clients missing it ────────────────────────
-        cursor.execute("""
-            INSERT INTO ClientSmsUsageDaily_Vtb (ClientId, UsageDate, SmsCount, CreatedDate)
-            SELECT
-                c.ClientId,
-                CAST(GETDATE() AS DATE),
-                ISNULL((
-                    SELECT AVG(SmsCount)
-                    FROM ClientSmsUsageDaily_Vtb h WITH (NOLOCK)
-                    WHERE h.ClientId  = c.ClientId
-                      AND h.UsageDate < CAST(GETDATE() AS DATE)
-                ), 0),
-                GETDATE()
-            FROM ClientSmsCredit_Vtb c WITH (NOLOCK)
-            WHERE NOT EXISTS (
-                SELECT 1 FROM ClientSmsUsageDaily_Vtb d WITH (NOLOCK)
-                WHERE d.ClientId  = c.ClientId
-                  AND d.UsageDate = CAST(GETDATE() AS DATE)
-            )
-        """)
-        today_inserted = cursor.rowcount
-
-        # ── Recalculate ClientSmsCredit_Vtb totals for all clients ─────
-        # Scoped to last 30 days (matches sync_sms_usage window) so all-time
-        # accumulation can never inflate UsagePercent beyond column precision.
-        cursor.execute("""
             UPDATE c
-            SET
-                c.UsedSMS      = agg.TotalUsed,
+            SET c.UsedSMS = u.TotalUsed,
                 c.RemainingSMS = CASE
-                                    WHEN c.AllocatedSMS > agg.TotalUsed
-                                    THEN c.AllocatedSMS - agg.TotalUsed
-                                    ELSE 0
-                                 END,
+                    WHEN c.AllocatedSMS > u.TotalUsed THEN c.AllocatedSMS - u.TotalUsed
+                    ELSE 0
+                END,
                 c.ModifiedDate = GETDATE()
             FROM ClientSmsCredit_Vtb c
-            INNER JOIN (
-                SELECT ClientId, SUM(SmsCount) AS TotalUsed
-                FROM ClientSmsUsageDaily_Vtb
-                WHERE UsageDate >= CAST(DATEADD(DAY, -30, GETDATE()) AS DATE)
-                GROUP BY ClientId
-            ) agg ON agg.ClientId = c.ClientId
+            INNER JOIN usage_scoped u ON c.ClientId = u.ClientId;
         """)
-
+        affected = cursor.rowcount
         conn.commit()
         cursor.close()
         conn.close()
-        print(f"[STARTUP] ensure_today_yesterday_data: +{yesterday_inserted} yesterday rows, +{today_inserted} today rows.")
-
+        invalidate_dashboard_cache()
+        print(f"[STARTUP] Historical usage reconciled for {affected} client(s).")
+        return {"affected_clients": affected}
     except Exception as e:
         print(f"[ERROR] ensure_today_yesterday_data: {e}")
+        return None
 
 
 def refresh_hourly_test_usage():
@@ -4045,77 +4029,99 @@ def fetch_audit_log(limit: int = 50, offset: int = 0,
         return {"total": 0, "rows": []}
 
 
+# Trend results are small and change only when the hourly sync changes usage.
+_trend_cache = {"weekly": {"data": None, "ts": None},
+                "monthly": {"data": None, "ts": None},
+                "yearly": {"data": None, "ts": None}}
+
+
 def fetch_sms_trend(period: str) -> dict:
-    """
-    Returns grand-total SMS counts aggregated across all clients.
-    period: 'weekly' (last 8 weeks), 'monthly' (last 12 months), 'yearly' (all years)
-    Sourced from Smslog_Vtb for full historical coverage.
-    Returns {"labels": [...], "data": [...], "total": int, "period": str}
+    """Return SMS trends quickly from ClientSmsUsageDaily_Vtb.
+
+    The raw Smslog_Vtb table can contain a very large number of rows. Scanning it
+    on every page load made SMS Trends slow. The daily table is already rebuilt
+    from the source SMS history by sync_sms_usage(), so trend queries aggregate
+    only a small number of rows and are cached for 60 seconds.
     """
     MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
               "Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    if period not in _trend_cache:
+        return {"labels": [], "data": [], "total": 0, "period": period}
+
+    cached = _trend_cache[period]
+    if cached["data"] is not None and cached["ts"] is not None:
+        if (datetime.now() - cached["ts"]).total_seconds() < _CACHE_TTL:
+            return cached["data"]
+
+    conn = cursor = None
     try:
-        conn   = get_connection()
+        conn = get_connection()
         cursor = conn.cursor()
 
         if period == "weekly":
             cursor.execute("""
                 SELECT
-                    YEAR(s.SentTime)               AS Yr,
-                    DATEPART(ISO_WEEK, s.SentTime) AS Wk,
-                    MIN(CAST(s.SentTime AS DATE))  AS WeekStart,
-                    SUM(CEILING(LEN(LTRIM(RTRIM(ISNULL(s.Message,'')))) / 160.0)) AS TotalSms
-                FROM Smslog_Vtb s WITH (NOLOCK)
-                WHERE s.SentTime >= DATEADD(WEEK, -12, GETDATE())
-                GROUP BY YEAR(s.SentTime), DATEPART(ISO_WEEK, s.SentTime)
+                    YEAR(d.UsageDate) AS Yr,
+                    DATEPART(ISO_WEEK, d.UsageDate) AS Wk,
+                    MIN(d.UsageDate) AS WeekStart,
+                    SUM(d.SmsCount) AS TotalSms
+                FROM ClientSmsUsageDaily_Vtb d WITH (NOLOCK)
+                WHERE d.UsageDate >= CAST(DATEADD(WEEK, -12, GETDATE()) AS DATE)
+                GROUP BY YEAR(d.UsageDate), DATEPART(ISO_WEEK, d.UsageDate)
                 ORDER BY Yr, Wk
             """)
-            rows   = cursor.fetchall()
+            rows = cursor.fetchall()
             labels = [r[2].strftime("%d %b") for r in rows]
-            data   = [int(r[3]) for r in rows]
+            data = [int(r[3] or 0) for r in rows]
 
         elif period == "monthly":
             cursor.execute("""
                 SELECT
-                    YEAR(s.SentTime)  AS Yr,
-                    MONTH(s.SentTime) AS Mo,
-                    SUM(CEILING(LEN(LTRIM(RTRIM(ISNULL(s.Message,'')))) / 160.0)) AS TotalSms
-                FROM Smslog_Vtb s WITH (NOLOCK)
-                WHERE s.SentTime >= DATEADD(MONTH, -12, GETDATE())
-                GROUP BY YEAR(s.SentTime), MONTH(s.SentTime)
+                    YEAR(d.UsageDate) AS Yr,
+                    MONTH(d.UsageDate) AS Mo,
+                    SUM(d.SmsCount) AS TotalSms
+                FROM ClientSmsUsageDaily_Vtb d WITH (NOLOCK)
+                WHERE d.UsageDate >= CAST(DATEADD(MONTH, -12, GETDATE()) AS DATE)
+                GROUP BY YEAR(d.UsageDate), MONTH(d.UsageDate)
                 ORDER BY Yr, Mo
             """)
-            rows   = cursor.fetchall()
+            rows = cursor.fetchall()
             labels = [f"{MONTHS[r[1]-1]} {r[0]}" for r in rows]
-            data   = [int(r[2]) for r in rows]
+            data = [int(r[2] or 0) for r in rows]
 
-        elif period == "yearly":
+        else:  # yearly
             cursor.execute("""
                 SELECT
-                    YEAR(s.SentTime) AS Yr,
-                    SUM(CEILING(LEN(LTRIM(RTRIM(ISNULL(s.Message,'')))) / 160.0)) AS TotalSms
-                FROM Smslog_Vtb s WITH (NOLOCK)
-                GROUP BY YEAR(s.SentTime)
+                    YEAR(d.UsageDate) AS Yr,
+                    SUM(d.SmsCount) AS TotalSms
+                FROM ClientSmsUsageDaily_Vtb d WITH (NOLOCK)
+                GROUP BY YEAR(d.UsageDate)
                 ORDER BY Yr
             """)
-            rows   = cursor.fetchall()
+            rows = cursor.fetchall()
             labels = [str(r[0]) for r in rows]
-            data   = [int(r[1]) for r in rows]
+            data = [int(r[1] or 0) for r in rows]
 
-        else:
-            cursor.close()
-            conn.close()
-            return {"labels": [], "data": [], "total": 0, "period": period}
-
-        cursor.close()
-        conn.close()
-        return {
+        result = {
             "labels": labels,
-            "data":   data,
-            "total":  sum(data),
+            "data": data,
+            "total": sum(data),
             "period": period,
         }
+        cached["data"] = result
+        cached["ts"] = datetime.now()
+        return result
 
     except Exception as e:
         print(f"[DB ERROR] fetch_sms_trend: {e}")
         return {"labels": [], "data": [], "total": 0, "period": period}
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
