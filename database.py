@@ -2,6 +2,7 @@ import io
 import math
 import os
 import random
+import re
 import smtplib
 import sys
 import threading
@@ -245,51 +246,206 @@ def generate_report_from_template(client_name, kiosk_id, start_date, end_date, r
         if os.path.exists(generated_path):
             os.remove(generated_path)
 
-def generate_detailed_sms_report(client_id, start_date=None, end_date=None):
+def _norm_client_key(value: str) -> str:
+    """Normalize client names/IDs for safe alias matching."""
+    if value is None:
+        return ""
+    v = re.sub(r"[^A-Za-z0-9]+", "", str(value)).upper()
+    # senderCompId commonly contains a channel suffix such as _WEB.
+    for suffix in ("WEB", "SMS", "API", "PORTAL", "APP"):
+        if v.endswith(suffix) and len(v) > len(suffix) + 3:
+            v = v[:-len(suffix)]
+            break
+    return v
+
+
+def _client_alias_score(sender_id: str, master_values: list[str]) -> int:
+    """Return a conservative alias score; 0 means no reliable match."""
+    s = _norm_client_key(sender_id)
+    if not s:
+        return 0
+    best = 0
+    for raw in master_values:
+        m = _norm_client_key(raw)
+        if not m or len(m) < 4:
+            continue
+        if s == m:
+            best = max(best, 100)
+        elif s.startswith(m) or m.startswith(s):
+            # Avoid matching tiny generic strings.
+            if min(len(s), len(m)) >= 6:
+                best = max(best, 80 + min(len(m), 19))
+    return best
+
+
+# Explicit legacy sender -> canonical business-client mappings.
+# These mappings are intentionally kept small and auditable. They prevent a
+# sender/channel ID that also happens to exist as a legacy ClientMst row from
+# stealing usage from the real business ClientId used by the dashboard.
+KNOWN_SENDER_TO_CLIENT = {
+    "HindTerminals_WEB": "VA000116",
+}
+
+
+def _load_sender_client_map(cursor) -> dict[str, str]:
+    """Map Smslog senderCompId values to canonical ClientMst ClientId values.
+
+    Rules, in order:
+      1. Explicit legacy mappings above always win.
+      2. Exact ClientMst ClientId matches are used when no explicit mapping exists.
+      3. Otherwise a unique conservative name/alias match is used.
+      4. Ambiguous/unmatched senders remain unmapped rather than being guessed.
     """
-    Generate the detailed, per-message Excel report (SMS_Report_Template.xlsx
-    format) containing the actual SMS records from Smslog_Vtb for one client.
-    Returns (excel_file, filename, sms_count) — or (None, None, 0) on failure.
-    """
+    cursor.execute("""
+        SELECT ClientId, ClientName, ClientActName, Client
+        FROM ClientMst_Vtb
+        WHERE ClientId IS NOT NULL
+    """)
+    masters = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT DISTINCT senderCompId
+        FROM Smslog_Vtb
+        WHERE senderCompId IS NOT NULL
+          AND LTRIM(RTRIM(senderCompId)) <> ''
+    """)
+    senders = [str(r[0]).strip() for r in cursor.fetchall() if r[0] is not None]
+
+    exact = {str(r[0]).strip(): str(r[0]).strip() for r in masters if r[0] is not None}
+    mapping = {}
+
+    for sender in senders:
+        # Explicit mapping takes priority over an accidental exact match in
+        # ClientMst_Vtb (e.g. HindTerminals_WEB is also present as a legacy
+        # ClientId, while VA000116 is the canonical business client).
+        explicit_client = KNOWN_SENDER_TO_CLIENT.get(sender)
+        if explicit_client and explicit_client in exact.values():
+            mapping[sender] = explicit_client
+            continue
+
+        if sender in exact:
+            mapping[sender] = exact[sender]
+            continue
+
+        scored = []
+        for row in masters:
+            cid = str(row[0]).strip() if row[0] is not None else ""
+            values = [row[1], row[2], row[3]]
+            score = _client_alias_score(sender, values)
+            if score:
+                scored.append((score, cid))
+
+        if not scored:
+            continue
+
+        top_score = max(score for score, _ in scored)
+        top_ids = sorted({cid for score, cid in scored if score == top_score})
+        if len(top_ids) == 1:
+            mapping[sender] = top_ids[0]
+
+    return mapping
+
+
+def resolve_sms_sender_ids(client_id: str) -> tuple[str | None, str, list[str]]:
+    """Resolve a UI ClientMst ID to the actual Smslog senderCompId values."""
     conn = None
     cursor = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ClientId, ClientName, ClientActName, Client
+            FROM ClientMst_Vtb
+            WHERE ClientId = ?
+        """, client_id)
+        master = cursor.fetchone()
+        if not master:
+            return None, client_id, []
 
-        cursor.execute("SELECT ClientName FROM ClientMst_Vtb WHERE ClientId = ?", client_id)
-        name_row = cursor.fetchone()
-        client_name = name_row[0].strip() if name_row else client_id
+        client_name = str(master[1] or client_id).strip()
+        cursor.execute("""
+            SELECT DISTINCT senderCompId
+            FROM Smslog_Vtb
+            WHERE senderCompId IS NOT NULL
+              AND LTRIM(RTRIM(senderCompId)) <> ''
+        """)
+        senders = [str(r[0]).strip() for r in cursor.fetchall() if r[0] is not None]
 
-        query = """
+        # Explicit legacy mappings are checked first so a canonical business
+        # client can resolve to its actual sender/channel ID even when that
+        # sender ID also exists as a separate legacy ClientMst row.
+        explicit_aliases = sorted({
+            sender for sender, canonical in KNOWN_SENDER_TO_CLIENT.items()
+            if canonical == client_id and sender in senders
+        })
+        if explicit_aliases:
+            return client_id, client_name, explicit_aliases
+
+        # Exact match is the normal path for clients whose ClientId is already
+        # the same as Smslog.senderCompId.
+        if client_id in senders:
+            return client_id, client_name, [client_id]
+
+        values = [master[1], master[2], master[3], client_id]
+        scored = []
+        for sender in senders:
+            score = _client_alias_score(sender, values)
+            if score:
+                scored.append((score, sender))
+
+        if not scored:
+            return client_id, client_name, []
+
+        top_score = max(score for score, _ in scored)
+        aliases = sorted({sender for score, sender in scored if score == top_score})
+        return client_id, client_name, aliases
+    except Exception as e:
+        print(f"[DB ERROR] resolve_sms_sender_ids: {e}")
+        return None, client_id, []
+    finally:
+        try:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+def generate_detailed_sms_report(client_id, start_date=None, end_date=None):
+    """Generate the detailed per-message report from the source Smslog table."""
+    conn = None
+    cursor = None
+    try:
+        resolved_id, client_name, sender_ids = resolve_sms_sender_ids(client_id)
+        if resolved_id is None or not sender_ids:
+            print(f"[REPORT] No Smslog sender mapping for client {client_id}")
+            return None, None, 0
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        placeholders = ",".join("?" for _ in sender_ids)
+        query = f"""
             SELECT senderCompId, MobileNo, Message, SentTime
             FROM Smslog_Vtb
-            WHERE senderCompId = ?
+            WHERE senderCompId IN ({placeholders})
         """
-        params = [client_id]
+        params = list(sender_ids)
+
         if start_date:
-            # Keep the predicate sargable so SQL Server can use an index on
-            # (senderCompId, SentTime) instead of applying CAST() to SentTime.
-            if isinstance(start_date, str):
-                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-            else:
-                start_dt = datetime.combine(start_date, datetime.min.time())
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else datetime.combine(start_date, datetime.min.time())
             query += " AND SentTime >= ?"
             params.append(start_dt)
         if end_date:
-            # Exclusive next-day boundary includes the complete end date.
-            if isinstance(end_date, str):
-                end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-            else:
-                end_dt = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
+            end_dt = (datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else datetime.combine(end_date, datetime.min.time())) + timedelta(days=1)
             query += " AND SentTime < ?"
             params.append(end_dt)
-        query += " ORDER BY SentTime DESC"
+        query += " ORDER BY SentTime ASC"
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close(); conn = None
 
         output, sms_count = generate_report_from_template(
             client_name=client_name,
@@ -298,21 +454,19 @@ def generate_detailed_sms_report(client_id, start_date=None, end_date=None):
             end_date=end_date or "",
             rows=rows,
         )
-
-        today_str = datetime.now().strftime("%Y%m%d")
-        filename = f"sms_detailed_report_{client_id}_{today_str}.xlsx"
-
-        print(f"[REPORT] Detailed SMS report generated: {client_id} - {sms_count} SMS")
+        filename = f"sms_detailed_report_{client_id}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        print(f"[REPORT] Detailed SMS report generated: {client_id} -> {sender_ids} - {sms_count} SMS")
         return output, filename, sms_count
-
     except Exception as e:
         print(f"[REPORT ERROR] generate_detailed_sms_report: {e}")
+        return None, None, 0
+    finally:
         try:
             if cursor: cursor.close()
             if conn: conn.close()
         except Exception:
             pass
-        return None, None, 0
+
 
 # ── In-memory TTL cache (60 s) — avoids hitting DB on every page load ───────
 _CACHE_TTL = 60   # seconds
@@ -1343,68 +1497,74 @@ def fetch_all_client_report_emails() -> list:
 
 
 def fetch_client_usage_report(client_id: str, start_date, end_date) -> dict | None:
-    """Fetch day-wise SMS usage for a client between start_date and end_date (inclusive)."""
+    """Fetch accurate day-wise usage directly from Smslog_Vtb.
+
+    ClientMst_Vtb.ClientId is the UI/business ID. Smslog_Vtb.senderCompId may be
+    a legacy channel ID such as HindTerminals_WEB, so the resolver maps the
+    selected business client to its real source sender ID(s).
+    """
+    conn = None
+    cursor = None
     try:
+        resolved_id, client_name, sender_ids = resolve_sms_sender_ids(client_id)
+        if resolved_id is None:
+            return None
+
         conn = get_connection()
         cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT ClientName FROM ClientMst_Vtb WHERE ClientId = ?", client_id
-        )
-        name_row = cursor.fetchone()
-        if not name_row:
-            cursor.close(); conn.close()
-            return None
-        client_name = name_row[0].strip()
-
-        cursor.execute("""
-            SELECT UsageDate, ISNULL(SmsCount, 0)
-            FROM ClientSmsUsageDaily_Vtb
-            WHERE ClientId  = ?
-              AND UsageDate >= ?
-              AND UsageDate <= ?
-            ORDER BY UsageDate
-        """, client_id, start_date, end_date)
-        rows = cursor.fetchall()
-        cursor.close(); conn.close()
-
-        daily = [
-            {
-                "date":  r[0].strftime("%Y-%m-%d"),
-                "label": r[0].strftime("%d %b %Y"),
-                "count": int(r[1])
-            }
-            for r in rows
-        ]
+        if not sender_ids:
+            daily = []
+        else:
+            placeholders = ",".join("?" for _ in sender_ids)
+            start_dt = datetime.combine(start_date, datetime.min.time()) if hasattr(start_date, "year") else datetime.strptime(str(start_date), "%Y-%m-%d")
+            end_dt = (datetime.combine(end_date, datetime.min.time()) if hasattr(end_date, "year") else datetime.strptime(str(end_date), "%Y-%m-%d")) + timedelta(days=1)
+            cursor.execute(f"""
+                SELECT CAST(SentTime AS DATE) AS UsageDate, COUNT(*) AS SmsCount
+                FROM Smslog_Vtb
+                WHERE senderCompId IN ({placeholders})
+                  AND SentTime >= ?
+                  AND SentTime < ?
+                GROUP BY CAST(SentTime AS DATE)
+                ORDER BY UsageDate
+            """, [*sender_ids, start_dt, end_dt])
+            rows = cursor.fetchall()
+            daily = [
+                {"date": r[0].strftime("%Y-%m-%d"), "label": r[0].strftime("%d %b %Y"), "count": int(r[1])}
+                for r in rows
+            ]
 
         base = {
-            "client_id":         client_id,
-            "client_name":       client_name,
-            "start_date_label":  start_date.strftime("%d %b %Y") if hasattr(start_date, "strftime") else str(start_date),
-            "end_date_label":    end_date.strftime("%d %b %Y")   if hasattr(end_date,   "strftime") else str(end_date),
-            "daily":             daily,
+            "client_id": client_id,
+            "client_name": client_name,
+            "source_sender_ids": sender_ids,
+            "start_date_label": start_date.strftime("%d %b %Y") if hasattr(start_date, "strftime") else str(start_date),
+            "end_date_label": end_date.strftime("%d %b %Y") if hasattr(end_date, "strftime") else str(end_date),
+            "daily": daily,
         }
-
         if not daily:
             return {**base, "total": 0, "avg": 0.0, "peak_day": None, "lowest_day": None}
 
-        counts    = [d["count"] for d in daily]
-        total     = sum(counts)
-        avg       = round(total / len(counts), 1)
-        peak_idx  = counts.index(max(counts))
-        low_idx   = counts.index(min(counts))
-
+        counts = [d["count"] for d in daily]
+        total = sum(counts)
+        avg = round(total / len(counts), 1)
+        peak_idx = counts.index(max(counts))
+        low_idx = counts.index(min(counts))
         return {
             **base,
-            "total":       total,
-            "avg":         avg,
-            "peak_day":    {"date": daily[peak_idx]["label"], "count": counts[peak_idx]},
-            "lowest_day":  {"date": daily[low_idx]["label"],  "count": counts[low_idx]},
+            "total": total,
+            "avg": avg,
+            "peak_day": {"date": daily[peak_idx]["label"], "count": counts[peak_idx]},
+            "lowest_day": {"date": daily[low_idx]["label"], "count": counts[low_idx]},
         }
-
     except Exception as e:
         print(f"[DB ERROR] fetch_client_usage_report: {e}")
         return None
+    finally:
+        try:
+            if cursor: cursor.close()
+            if conn: conn.close()
+        except Exception:
+            pass
 
 
 def build_usage_report_excel(report: dict):
@@ -3252,10 +3412,14 @@ def cleanup_orphaned_rows() -> dict:
         credits_removed = cursor.rowcount
 
         cursor.execute("""
-            DELETE FROM ClientSmsUsageDaily_Vtb
+            DELETE FROM ClientSmsUsageDaily_Vtb d
             WHERE NOT EXISTS (
                 SELECT 1 FROM ClientMst_Vtb m
-                WHERE m.ClientId = ClientSmsUsageDaily_Vtb.ClientId
+                WHERE m.ClientId = d.ClientId
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM Smslog_Vtb s
+                WHERE s.senderCompId = d.ClientId
             )
         """)
         daily_removed = cursor.rowcount
@@ -3275,44 +3439,60 @@ def cleanup_orphaned_rows() -> dict:
 
 
 def sync_sms_usage():
-    """Synchronize the complete available SMS history into daily usage.
-
-    The source of truth is Smslog_Vtb.  senderCompId is the authoritative
-    client identifier and is matched to ClientSmsCredit_Vtb.ClientId.
-    No artificial/test usage is created here.
-    """
+    """Synchronize historical SMS usage while resolving legacy sender aliases."""
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Rebuild/update every available historical day from the source table.
-        # Dashboard usage is based on actual SMS rows, so one row = one SMS.
-        # Do not require a credit row here: historical usage should still be
-        # captured even when an admin has not yet created ClientSmsCredit_Vtb.
-        cursor.execute("""
-            MERGE ClientSmsUsageDaily_Vtb AS target
-            USING (
-                SELECT
-                    s.senderCompId AS ClientId,
-                    CAST(s.SentTime AS DATE) AS UsageDate,
-                    COUNT(*) AS SmsCount
-                FROM Smslog_Vtb s
-                WHERE s.senderCompId IS NOT NULL
-                  AND s.SentTime IS NOT NULL
-                GROUP BY s.senderCompId, CAST(s.SentTime AS DATE)
-            ) AS source
-            ON target.ClientId = source.ClientId
-            AND target.UsageDate = source.UsageDate
-            WHEN MATCHED THEN
-                UPDATE SET target.SmsCount = source.SmsCount
-            WHEN NOT MATCHED THEN
-                INSERT (ClientId, UsageDate, SmsCount, CreatedDate)
-                VALUES (source.ClientId, source.UsageDate, source.SmsCount, GETDATE());
-        """)
-        synced_rows = cursor.rowcount
+        sender_map = _load_sender_client_map(cursor)
 
-        # UsedSMS is the sum of all synchronized historical usage, constrained
-        # only by an explicitly configured validity window when one exists.
+        # Build a temporary source aggregate. Mapped senders use the business
+        # ClientMst ClientId; unmapped senders keep their original sender ID so
+        # no source data is silently lost.
+        cursor.execute("""
+            IF OBJECT_ID('tempdb..#SmsUsageSource') IS NOT NULL DROP TABLE #SmsUsageSource;
+            SELECT
+                s.senderCompId AS SenderId,
+                CAST(s.SentTime AS DATE) AS UsageDate,
+                COUNT(*) AS SmsCount
+            INTO #SmsUsageSource
+            FROM Smslog_Vtb s
+            WHERE s.senderCompId IS NOT NULL
+              AND s.SentTime IS NOT NULL
+            GROUP BY s.senderCompId, CAST(s.SentTime AS DATE);
+        """)
+
+        # Clear/rebuild the daily table from source truth. This prevents stale
+        # daily rows from surviving after source corrections while preserving
+        # unmapped sender IDs for auditability.
+        cursor.execute("DELETE FROM ClientSmsUsageDaily_Vtb")
+
+        rows = cursor.execute("""
+            SELECT SenderId, UsageDate, SmsCount
+            FROM #SmsUsageSource
+            ORDER BY UsageDate, SenderId
+        """).fetchall()
+
+        insert_rows = []
+        for sender_id, usage_date, sms_count in rows:
+            sender_id = str(sender_id).strip()
+            canonical_id = sender_map.get(sender_id, sender_id)
+            insert_rows.append((canonical_id, usage_date, int(sms_count)))
+
+        # Multiple sender aliases can resolve to the same client/day. Aggregate
+        # again in Python before inserting to preserve the UNIQUE(ClientId,Date)
+        # constraint and keep counts exact.
+        aggregated = {}
+        for cid, usage_date, count in insert_rows:
+            key = (cid, usage_date)
+            aggregated[key] = aggregated.get(key, 0) + count
+
+        cursor.executemany("""
+            INSERT INTO ClientSmsUsageDaily_Vtb (ClientId, UsageDate, SmsCount, CreatedDate)
+            VALUES (?, ?, ?, GETDATE())
+        """, [(cid, dt, count) for (cid, dt), count in aggregated.items()])
+        synced_rows = len(aggregated)
+
         cursor.execute("""
             ;WITH usage_scoped AS (
                 SELECT
@@ -3338,17 +3518,14 @@ def sync_sms_usage():
         affected_clients = cursor.rowcount
 
         conn.commit()
-        cursor.close()
-        conn.close()
+        cursor.close(); conn.close()
 
         global _last_synced_at
         _last_synced_at = datetime.now()
         invalidate_dashboard_cache()
-
-        print(f"[SYNC] {synced_rows} historical day-rows upserted, {affected_clients} client(s) recalculated.")
+        print(f"[SYNC] {synced_rows} canonical historical day-rows rebuilt, {affected_clients} client(s) recalculated.")
         cleanup_orphaned_rows()
         return {"synced_rows": synced_rows, "affected_clients": affected_clients}
-
     except Exception as e:
         import traceback
         print("[ERROR] sync_sms_usage failed:")
