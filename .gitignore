@@ -14,3 +14,5 @@ viewer_cookies.txt
 test_cookies.txt
 server_out.txt
 server_err.txt
+
+newrelic.ini
