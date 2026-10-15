@@ -83,6 +83,19 @@
         }
         .ur-gen-btn:hover { background: #232960; }
         .ur-gen-btn:disabled { opacity: .6; cursor: not-allowed; }
+        .ur-btn-spinner {
+            display: none;
+            width: 13px;
+            height: 13px;
+            margin-right: 7px;
+            border: 2px solid rgba(255,255,255,.45);
+            border-top-color: #fff;
+            border-radius: 50%;
+            vertical-align: -2px;
+            animation: ur-spin .7s linear infinite;
+        }
+        .ur-gen-btn.is-loading .ur-btn-spinner { display: inline-block; }
+        @keyframes ur-spin { to { transform: rotate(360deg); } }
         .ur-feedback {
             font-size: 12px;
             font-weight: 500;
@@ -371,7 +384,10 @@
                         <label>End Date</label>
                         <input type="date" id="rpt-end" autocomplete="off" onclick="if(this.showPicker)this.showPicker()" />
                     </div>
-                    <button class="ur-gen-btn" id="rpt-gen-btn" onclick="generateReport()">Generate Report</button>
+                    <button class="ur-gen-btn" id="rpt-gen-btn" onclick="generateReport()">
+                        <span class="ur-btn-spinner" id="rpt-btn-spinner" aria-hidden="true"></span>
+                        <span id="rpt-btn-label">Generate Report</span>
+                    </button>
                 </div>
                 <div class="ur-feedback" id="rpt-feedback"></div>
             </div>
@@ -433,13 +449,13 @@
                 <div class="ur-card">
                     <p class="ur-card-title">Actions</p>
                     <div class="ur-action-row">
-                        <button class="ur-dl-btn" onclick="downloadReport()">
+                        <button class="ur-dl-btn" id="rpt-download-btn" onclick="downloadReport()">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:middle;margin-right:5px;">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                                 <polyline points="7 10 12 15 17 10"/>
                                 <line x1="12" y1="15" x2="12" y2="3"/>
                             </svg>
-                            Download Report (Excel)
+                            <span id="rpt-download-label">Download Report (Excel)</span>
                         </button>
                         <button class="ur-send-btn" id="rpt-send-btn" onclick="sendReport()">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:middle;margin-right:5px;">
@@ -566,6 +582,7 @@
             var endDate   = document.getElementById('rpt-end').value;
             var fb        = document.getElementById('rpt-feedback');
             var btn       = document.getElementById('rpt-gen-btn');
+            var btnLabel  = document.getElementById('rpt-btn-label');
 
             fb.textContent = '';
             fb.className   = 'ur-feedback';
@@ -586,8 +603,9 @@
                 return;
             }
 
-            btn.disabled    = true;
-            btn.textContent = 'Loading…';
+            btn.disabled = true;
+            btn.classList.add('is-loading');
+            btnLabel.textContent = 'Loading…';
             fb.textContent  = 'Fetching data…';
             fb.className    = 'ur-feedback info';
 
@@ -595,10 +613,22 @@
                 var url = '/api/client-usage-report?client_id=' + encodeURIComponent(clientId)
                         + '&start_date=' + encodeURIComponent(startDate)
                         + '&end_date='   + encodeURIComponent(endDate);
-                var res  = await fetch(url, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { 'Accept': 'application/json' } });
-                if (res.status === 401 || res.status === 403) { window.location.href = '/'; return; }
+                var res  = await fetch(url, {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                if (res.status === 401 || res.status === 403) {
+                    window.location.href = '/';
+                    return;
+                }
+
                 var data = await res.json();
-                if (!res.ok && data.status !== 'error') { throw new Error('HTTP ' + res.status); }
+                if (!res.ok && data.status !== 'error') {
+                    throw new Error('HTTP ' + res.status);
+                }
 
                 if (data.status === 'error') {
                     fb.textContent = data.message || 'Failed to fetch data.';
@@ -606,10 +636,12 @@
                     document.getElementById('rpt-results').style.display = 'none';
                     return;
                 }
+
                 if (data.status === 'empty') {
                     fb.textContent = 'No usage data found for the selected date range.';
                     fb.className   = 'ur-feedback info';
                     document.getElementById('rpt-results').style.display = 'none';
+                    _currentReport = null;
                     return;
                 }
 
@@ -621,12 +653,14 @@
 
             } catch (err) {
                 console.error('Client Usage Report: generate failed', err);
-                fb.textContent = 'Unable to generate report. Check the server/DB connection and try again.';
+                fb.textContent = 'Unable to generate report. Check the server/DB connection and refresh.';
                 fb.className   = 'ur-feedback error';
+                document.getElementById('rpt-results').style.display = 'none';
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('is-loading');
+                btnLabel.textContent = 'Generate Report';
             }
-
-            btn.disabled    = false;
-            btn.textContent = 'Generate Report';
         };
 
         /* ── Render results ── */
@@ -741,19 +775,66 @@
         }
 
         /* ── Download report ── */
-        window.downloadReport = function () {
+        window.downloadReport = async function () {
             var clientId  = document.getElementById('rpt-client').value.trim();
             var startDate = document.getElementById('rpt-start').value;
             var endDate   = document.getElementById('rpt-end').value;
+            var af        = document.getElementById('rpt-action-feedback');
+            var btn       = document.getElementById('rpt-download-btn');
+            var label     = document.getElementById('rpt-download-label');
+
             if (!clientId || !startDate || !endDate) {
-                var af0 = document.getElementById('rpt-action-feedback');
-                if (af0) { af0.textContent = 'Generate a report first by selecting a client and date range.'; af0.className = 'ur-action-feedback error'; }
+                if (af) { af.textContent = 'Generate a report first by selecting a client and date range.'; af.className = 'ur-action-feedback error'; }
                 return;
             }
-            window.location.href = '/api/client-usage-report/download-detailed?client_id='
-                + encodeURIComponent(clientId)
-                + '&start_date=' + encodeURIComponent(startDate)
-                + '&end_date='   + encodeURIComponent(endDate);
+
+            if (btn) btn.disabled = true;
+            if (label) label.textContent = 'Downloading…';
+            if (af) { af.textContent = ''; af.className = 'ur-action-feedback'; }
+
+            try {
+                var res = await fetch('/api/client-usage-report/download-detailed?client_id='
+                    + encodeURIComponent(clientId)
+                    + '&start_date=' + encodeURIComponent(startDate)
+                    + '&end_date='   + encodeURIComponent(endDate), { credentials: 'same-origin' });
+
+                if (res.status === 401 || res.status === 403) {
+                    window.location.href = '/';
+                    return;
+                }
+                if (!res.ok) {
+                    throw new Error('Download failed');
+                }
+
+                var blob = await res.blob();
+                var disposition = res.headers.get('Content-Disposition') || '';
+                var filenameMatch = disposition.match(/filename[^;=]*=((['"]).*?\2|[^;]*)/i);
+                var filename = filenameMatch ? filenameMatch[1].replace(/^['"]|['"]$/g, '') : 'SMS_Report.xlsx';
+
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+                if (af) {
+                    af.textContent = 'Report downloaded successfully.';
+                    af.className = 'ur-action-feedback success';
+                }
+                if (window.showToast) showToast('Report downloaded successfully.', 'success');
+            } catch (_) {
+                if (af) {
+                    af.textContent = 'Failed to download report. Try again.';
+                    af.className = 'ur-action-feedback error';
+                }
+                if (window.showToast) showToast('Failed to download report. Try again.', 'error');
+            }
+
+            if (btn) btn.disabled = false;
+            if (label) label.textContent = 'Download Report (Excel)';
         };
 
         /* ── Send report to client email ── */

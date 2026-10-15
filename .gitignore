@@ -15,4 +15,8 @@ test_cookies.txt
 server_out.txt
 server_err.txt
 
+# Virtual environment
+venv/
+
+# New Relic configuration — may contain secrets
 newrelic.ini

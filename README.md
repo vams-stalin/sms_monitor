@@ -29,7 +29,7 @@ Open your browser at: **http://localhost:8000**
 
 | Role    | Username   | Password  | Access                          |
 |---------|------------|-----------|---------------------------------|
-| Admin   | admin      | ADMIN123  | Full access — can assign credits, manage users, trigger sync |
+| Admin   | admin      | Admin@123 | Full access — can assign credits, manage users, trigger sync |
 | Viewer  | testviewer | ViewerTest1 | Read-only — dashboard and analytics only |
 
 ---

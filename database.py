@@ -1497,50 +1497,73 @@ def fetch_all_client_report_emails() -> list:
 
 
 def fetch_client_usage_report(client_id: str, start_date, end_date) -> dict | None:
-    """Fetch accurate day-wise usage directly from Smslog_Vtb.
+    """Fetch day-wise usage from the synchronized daily table.
 
-    ClientMst_Vtb.ClientId is the UI/business ID. Smslog_Vtb.senderCompId may be
-    a legacy channel ID such as HindTerminals_WEB, so the resolver maps the
-    selected business client to its real source sender ID(s).
+    The daily table is rebuilt from Smslog_Vtb by sync_sms_usage() and has an
+    index/unique key on (ClientId, UsageDate). Using it here avoids scanning
+    the potentially very large Smslog_Vtb table for every report request.
+
+    This also makes an unavailable historical date range return immediately
+    with an empty result instead of waiting for a source-table scan.
     """
     conn = None
     cursor = None
     try:
-        resolved_id, client_name, sender_ids = resolve_sms_sender_ids(client_id)
-        if resolved_id is None:
-            return None
-
         conn = get_connection()
         cursor = conn.cursor()
-        if not sender_ids:
-            daily = []
-        else:
-            placeholders = ",".join("?" for _ in sender_ids)
-            start_dt = datetime.combine(start_date, datetime.min.time()) if hasattr(start_date, "year") else datetime.strptime(str(start_date), "%Y-%m-%d")
-            end_dt = (datetime.combine(end_date, datetime.min.time()) if hasattr(end_date, "year") else datetime.strptime(str(end_date), "%Y-%m-%d")) + timedelta(days=1)
-            cursor.execute(f"""
-                SELECT CAST(SentTime AS DATE) AS UsageDate, COUNT(*) AS SmsCount
-                FROM Smslog_Vtb
-                WHERE senderCompId IN ({placeholders})
-                  AND SentTime >= ?
-                  AND SentTime < ?
-                GROUP BY CAST(SentTime AS DATE)
-                ORDER BY UsageDate
-            """, [*sender_ids, start_dt, end_dt])
-            rows = cursor.fetchall()
-            daily = [
-                {"date": r[0].strftime("%Y-%m-%d"), "label": r[0].strftime("%d %b %Y"), "count": int(r[1])}
-                for r in rows
-            ]
+
+        # Resolve the client name without touching the large SMS history table.
+        cursor.execute("""
+            SELECT ClientName
+            FROM ClientMst_Vtb WITH (NOLOCK)
+            WHERE ClientId = ?
+        """, client_id)
+        master = cursor.fetchone()
+        if not master:
+            return None
+
+        start_dt = (
+            start_date if hasattr(start_date, "year")
+            else datetime.strptime(str(start_date), "%Y-%m-%d").date()
+        )
+        end_dt = (
+            end_date if hasattr(end_date, "year")
+            else datetime.strptime(str(end_date), "%Y-%m-%d").date()
+        )
+
+        # ClientId + UsageDate is backed by the existing unique index, so this
+        # is a small indexed range lookup even for old dates/years.
+        cursor.execute("""
+            SELECT UsageDate, SmsCount
+            FROM ClientSmsUsageDaily_Vtb WITH (NOLOCK)
+            WHERE ClientId = ?
+              AND UsageDate >= ?
+              AND UsageDate <= ?
+            ORDER BY UsageDate
+        """, client_id, start_dt, end_dt)
+        rows = cursor.fetchall()
+
+        daily = [
+            {
+                "date": r[0].strftime("%Y-%m-%d"),
+                "label": r[0].strftime("%d %b %Y"),
+                "count": int(r[1] or 0),
+            }
+            for r in rows
+        ]
 
         base = {
             "client_id": client_id,
-            "client_name": client_name,
-            "source_sender_ids": sender_ids,
-            "start_date_label": start_date.strftime("%d %b %Y") if hasattr(start_date, "strftime") else str(start_date),
-            "end_date_label": end_date.strftime("%d %b %Y") if hasattr(end_date, "strftime") else str(end_date),
+            "client_name": str(master[0] or client_id).strip(),
+            # Kept for API compatibility. The normal report is sourced from
+            # ClientSmsUsageDaily_Vtb, so no expensive sender resolution is
+            # required here.
+            "source_sender_ids": [],
+            "start_date_label": start_dt.strftime("%d %b %Y"),
+            "end_date_label": end_dt.strftime("%d %b %Y"),
             "daily": daily,
         }
+
         if not daily:
             return {**base, "total": 0, "avg": 0.0, "peak_day": None, "lowest_day": None}
 
@@ -4207,6 +4230,7 @@ def fetch_audit_log(limit: int = 50, offset: int = 0,
 
 
 # Trend results are small and change only when the hourly sync changes usage.
+_TREND_CACHE_TTL = 300  # seconds; invalidated after every SMS usage sync
 _trend_cache = {"weekly": {"data": None, "ts": None},
                 "monthly": {"data": None, "ts": None},
                 "yearly": {"data": None, "ts": None}}
@@ -4218,7 +4242,7 @@ def fetch_sms_trend(period: str) -> dict:
     The raw Smslog_Vtb table can contain a very large number of rows. Scanning it
     on every page load made SMS Trends slow. The daily table is already rebuilt
     from the source SMS history by sync_sms_usage(), so trend queries aggregate
-    only a small number of rows and are cached for 60 seconds.
+    only a small number of rows and are cached for 5 minutes.
     """
     MONTHS = ["Jan","Feb","Mar","Apr","May","Jun",
               "Jul","Aug","Sep","Oct","Nov","Dec"]
@@ -4228,7 +4252,7 @@ def fetch_sms_trend(period: str) -> dict:
 
     cached = _trend_cache[period]
     if cached["data"] is not None and cached["ts"] is not None:
-        if (datetime.now() - cached["ts"]).total_seconds() < _CACHE_TTL:
+        if (datetime.now() - cached["ts"]).total_seconds() < _TREND_CACHE_TTL:
             return cached["data"]
 
     conn = cursor = None
